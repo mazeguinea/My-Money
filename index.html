@@ -84,10 +84,27 @@ var DEFAULT_DEBT_TPL=[
 ];
 
 var expTpl,debtTpl,months;
+function normEntries(){
+ // convert bare numbers -> {id,amt}; idempotent
+ var changed=false;
+ Object.keys(months).forEach(function(k){
+   var m=months[k];["in","out","payments"].forEach(function(bk){
+     var b=m[bk];if(!b)return;
+     Object.keys(b).forEach(function(id){
+       b[id]=(b[id]||[]).map(function(x){
+         if(typeof x==="number"){changed=true;return {id:uid(),amt:+x};}
+         return x;
+       });
+     });
+   });
+ });
+ if(changed)saveJSON("mm3_months",months);
+}
 function refreshFromStore(){
  expTpl=loadJSON("mm3_exp_tpl",DEFAULT_EXP_TPL);
  debtTpl=loadJSON("mm3_debt_tpl",DEFAULT_DEBT_TPL);
  months=loadJSON("mm3_months",{});
+ normEntries();
 }
 refreshFromStore();
 function saveTpl(){saveJSON("mm3_exp_tpl",expTpl);saveJSON("mm3_debt_tpl",debtTpl);}
@@ -106,7 +123,7 @@ ensureMonth(nowKey());
 function allMonthKeys(){var ks={};ks[nowKey()]=1;Object.keys(months).forEach(function(k){ks[k]=1;});
  return Object.keys(ks).sort(function(a,b){return keyToDate(a)-keyToDate(b);});}
 
-function sumArr(a){return (a||[]).reduce(function(s,x){return s+x;},0);}
+function sumArr(a){return (a||[]).reduce(function(s,x){return s+(typeof x==="number"?x:(x&&x.amt||0));},0);}
 /* pot balance across ALL months up to & including uptoKey */
 function potBalance(expId,uptoKey){var lim=keyToDate(uptoKey);var bal=0;
  Object.keys(months).forEach(function(k){if(keyToDate(k)<=lim){
@@ -204,11 +221,11 @@ function renderMonth(wrap){
    // two actions: add money in, record spend out
    var inInp=h("input",{inputmode:"decimal",placeholder:"add",
      style:"width:100%;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:9px 8px 9px 20px;color:"+C.ink+";font-weight:700;font-size:14px;"});
-   function addIn(){var v=parseFloat(inInp.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.in[e.id])m.in[e.id]=[];m.in[e.id].push(+v.toFixed(2));saveMonths();render();}
+   function addIn(){var v=parseFloat(inInp.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.in[e.id])m.in[e.id]=[];m.in[e.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
    inInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addIn();});
    var outInp=h("input",{inputmode:"decimal",placeholder:"spend",
      style:"width:100%;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:9px 8px 9px 20px;color:"+C.ink+";font-weight:700;font-size:14px;"});
-   function addOut(){var v=parseFloat(outInp.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.out[e.id])m.out[e.id]=[];m.out[e.id].push(+v.toFixed(2));saveMonths();render();}
+   function addOut(){var v=parseFloat(outInp.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.out[e.id])m.out[e.id]=[];m.out[e.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
    outInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addOut();});
 
    row.appendChild(h("div",{style:"display:flex;gap:7px;margin-top:11px;"},[
@@ -261,7 +278,7 @@ function renderDebts(wrap){
    if(!done){
      var pin=h("input",{inputmode:"decimal",placeholder:"payment in "+shortOf(k),
        style:"width:100%;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:10px 12px 10px 24px;color:"+C.ink+";font-weight:700;font-size:15px;"});
-     function payIt(){var v=parseFloat(pin.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.payments[d.id])m.payments[d.id]=[];m.payments[d.id].push(+v.toFixed(2));saveMonths();render();}
+     function payIt(){var v=parseFloat(pin.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.payments[d.id])m.payments[d.id]=[];m.payments[d.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
      pin.addEventListener("keydown",function(ev){if(ev.key==="Enter")payIt();});
      sec.appendChild(h("div",{style:"display:flex;gap:8px;margin-top:11px;"},[
        h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:12px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:16px;"},["$"]),pin]),
@@ -287,25 +304,73 @@ function editDebt(d){
 }
 
 /* ---------- HISTORY ---------- */
+function entryName(bk,id){
+ if(bk==="payments"){var d=debtTpl.filter(function(x){return x.id===id;})[0];return d?d.name:"(removed debt)";}
+ var e=expTpl.filter(function(x){return x.id===id;})[0];return e?e.name:"(removed)";
+}
+function editEntry(k,bk,id,entryId){
+ var m=months[k];var arr=m[bk][id];var idx=-1;
+ for(var i=0;i<arr.length;i++){if(arr[i].id===entryId){idx=i;break;}}
+ if(idx<0)return;
+ var v=prompt("Edit amount ($):",String(arr[idx].amt));if(v===null)return;
+ v=parseFloat(v);if(isNaN(v)||v<=0){alert("Enter a number greater than 0, or use Delete.");return;}
+ arr[idx].amt=+v.toFixed(2);saveMonths();render();
+}
+function delEntry(k,bk,id,entryId){
+ if(!confirm("Delete this entry?"))return;
+ var m=months[k];m[bk][id]=m[bk][id].filter(function(x){return x.id!==entryId;});saveMonths();render();
+}
 function renderOverview(wrap){
  var keys=allMonthKeys().slice().reverse();
  wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:13px 15px;font-size:12.5px;line-height:1.5;color:"+C.ink+";margin-bottom:14px;"},
-   ["Each month: money you added to pots, money you actually spent, and debt paid. Tap a month to open it."]));
+   ["Each month: money added to pots, money spent, debt paid. Tap a month to see every entry and fix mistakes."]));
+ if(!state.openMonth)state.openMonth=null;
  keys.forEach(function(k){
    var m=months[k]||{in:{},out:{},payments:{}};
    var inT=0,outT=0,debtT=0;
    expTpl.forEach(function(e){inT+=sumArr(m.in&&m.in[e.id]);outT+=sumArr(m.out&&m.out[e.id]);});
    Object.keys(m.payments||{}).forEach(function(id){debtT+=sumArr(m.payments[id]);});
-   wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:9px;",
-     onclick:function(){state.viewKey=k;state.tab="month";render();}},[
+   var open=state.openMonth===k;
+   var head=h("div",{style:"background:"+C.card+";border:1px solid "+(open?C.ink:C.rule)+";border-radius:12px;padding:14px 15px;margin-bottom:"+(open?"0":"9px")+";"+(open?"border-bottom-left-radius:0;border-bottom-right-radius:0;":""),
+     onclick:function(){state.openMonth=open?null:k;render();}},[
      h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;"},[
        h("span",{style:"font-size:15px;font-weight:700;"},[labelOf(k)+(k===nowKey()?"  · now":"")]),
-       h("span",{style:"font-size:12px;color:"+C.faint+";"},["tap to open ›"])]),
+       h("span",{style:"font-size:12px;color:"+C.faint+";"},[open?"tap to close ▾":"tap to view ›"])]),
      h("div",{style:"display:flex;gap:16px;margin-top:9px;font-size:12.5px;flex-wrap:wrap;"},[
        h("span",{style:"color:"+C.green+";font-weight:600;"},["+ "+money0(inT)+" into pots"]),
        h("span",{style:"color:"+C.red+";font-weight:600;"},["− "+money0(outT)+" spent"]),
        h("span",{style:"color:"+C.ink+";font-weight:600;"},[money0(debtT)+" to debt"])])
-   ]));
+   ]);
+   wrap.appendChild(head);
+   if(open){
+     var panel=h("div",{style:"background:"+C.card+";border:1px solid "+C.ink+";border-top:none;border-radius:0 0 12px 12px;padding:6px 15px 14px;margin-bottom:9px;"});
+     var any=false;
+     function section(title,bk,color){
+       var rows=[];
+       Object.keys(m[bk]||{}).forEach(function(id){
+         (m[bk][id]||[]).forEach(function(en){
+           any=true;
+           rows.push(h("div",{style:"display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid "+C.rule+";"},[
+             h("span",{style:"flex:1;font-size:13px;"},[entryName(bk,id)]),
+             h("span",{style:"font-size:13.5px;font-weight:700;color:"+color+";min-width:70px;text-align:right;"},[money(en.amt)]),
+             h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",
+               onclick:function(){editEntry(k,bk,id,en.id);}},["edit"]),
+             h("button",{style:"border:none;background:none;color:"+C.red+";font-size:11.5px;text-decoration:underline;",
+               onclick:function(){delEntry(k,bk,id,en.id);}},["delete"])
+           ]));
+         });
+       });
+       if(rows.length){
+         panel.appendChild(h("div",{style:"font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin:10px 0 2px;"},[title]));
+         rows.forEach(function(r){panel.appendChild(r);});
+       }
+     }
+     section("Added to pots","in",C.green);
+     section("Spent from pots","out",C.red);
+     section("Debt payments","payments",C.ink);
+     if(!any)panel.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";padding:12px 0;"},["No entries logged this month yet."]));
+     wrap.appendChild(panel);
+   }
  });
 }
 
