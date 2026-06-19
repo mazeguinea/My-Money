@@ -288,7 +288,10 @@ function renderMonth(wrap){
    inInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addIn();});
    var outInp=h("input",{inputmode:"decimal",placeholder:"spend",
      style:"width:100%;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:9px 8px 9px 20px;color:"+C.ink+";font-weight:700;font-size:14px;"});
-   function addOut(){var v=parseFloat(outInp.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.out[e.id])m.out[e.id]=[];m.out[e.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
+   function addOut(){var v=parseFloat(outInp.value);if(!v||v<=0)return;
+     var avail=potBalance(e.id,k);
+     if(v>avail+0.001){alert("This pot only has "+money(avail)+" in it.\n\nSet aside the money first (use \"+ In\"), then spend it. A pot can't go negative.");return;}
+     var m=ensureMonth(k);if(!m.out[e.id])m.out[e.id]=[];m.out[e.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
    outInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addOut();});
 
    row.appendChild(h("div",{style:"display:flex;gap:7px;margin-top:11px;"},[
@@ -369,7 +372,10 @@ function renderBills(wrap){
    inInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addIn();});
    var outInp=h("input",{inputmode:"decimal",placeholder:"pay bill",
      style:"width:100%;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:9px 8px 9px 20px;color:"+C.ink+";font-weight:700;font-size:14px;"});
-   function addOut(){var v=parseFloat(outInp.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.out[b.id])m.out[b.id]=[];m.out[b.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
+   function addOut(){var v=parseFloat(outInp.value);if(!v||v<=0)return;
+     var avail=billBalance(b.id,k);
+     if(v>avail+0.001){alert("You've only set aside "+money(avail)+" for "+b.name+".\n\nSet aside the rest first (use \"+ Aside\"), then pay it. A bill pot can't go negative.");return;}
+     var m=ensureMonth(k);if(!m.out[b.id])m.out[b.id]=[];m.out[b.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
    outInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addOut();});
    row.appendChild(h("div",{style:"display:flex;gap:7px;margin-top:11px;"},[
      h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:9px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:13px;"},["$"]),inInp]),
