@@ -81,8 +81,8 @@ var DEFAULT_DEBT_TPL=[
  {id:"d2",name:"Afterpay",total:820.33,note:"fees if late",isCard:true},
  {id:"d3",name:"Loan",total:18700,note:"no interest (family)"},
  {id:"d4",name:"Snooky",total:16800,note:"no interest (family)"},
- {id:"d5",name:"Fujin (car · my half)",total:14524.38,note:"~$558.63/mo, ~26 months left"}
-];
+ {id:"d5_removed_placeholder",name:"__none__",total:0,note:""}
+].filter(function(d){return d.name!=="__none__";});
 // Bills = pots you fund gradually toward a dated due. cycle drives the weekly set-aside.
 var DEFAULT_BILL_TPL=[
  {id:"b1",name:"Rent",amount:1868,cycle:"monthly",due:21,note:""},
@@ -98,6 +98,7 @@ var DEFAULT_BILL_TPL=[
 ];
 // Workouts are fortnightly (15th & 30th) at 230 each pay — represent as a fortnightly bill.
 DEFAULT_BILL_TPL.push({id:"b11",name:"Workouts",amount:230,cycle:"fortnightly",due:15,due2:30,note:"15th & 30th"});
+DEFAULT_BILL_TPL.push({id:"b12",name:"Fujin (car · my half)",amount:558.63,cycle:"monthly",due:1,note:"car with Randall",totalInst:26,instPaid:0});
 
 
 var expTpl,debtTpl,billTpl,months,archived;
@@ -121,6 +122,22 @@ function normEntries(){
    if(d.isCard===undefined){var n=(d.name||"").toLowerCase();
      if(n.indexOf("credit")>=0||n.indexOf("card")>=0||n.indexOf("afterpay")>=0){d.isCard=true;ch2=true;}}});
    if(ch2)saveJSON("mm3_debt_tpl",debtTpl);}
+
+ // one-time migration: move Fujin from debts to bills (installment tracker)
+ if(typeof debtTpl!=="undefined"&&debtTpl&&typeof billTpl!=="undefined"&&billTpl){
+   var fi=-1; for(var z=0;z<debtTpl.length;z++){if((debtTpl[z].name||"").toLowerCase().indexOf("fujin")>=0){fi=z;break;}}
+   if(fi>=0){
+     var fd=debtTpl[fi];
+     var already=billTpl.some(function(b){return (b.name||"").toLowerCase().indexOf("fujin")>=0;});
+     if(!already){
+       // derive installments paid from how much of the total has been paid, if any
+       var paid=(typeof debtPaidThrough==="function")?0:0;
+       billTpl.push({id:"fujin_bill",name:fd.name,amount:558.63,cycle:"monthly",due:1,note:"car with Randall",totalInst:26,instPaid:0});
+     }
+     debtTpl.splice(fi,1);
+     saveJSON("mm3_debt_tpl",debtTpl); saveJSON("mm3_bill_tpl",billTpl);
+   }
+ }
  if(changed)saveJSON("mm3_months",months);
 }
 function refreshFromStore(){
@@ -468,6 +485,22 @@ function renderBills(wrap){
      h("span",{style:"font-size:15px;font-weight:700;color:"+(bal<0?C.red:C.ink)+";"},[money(bal)])
    ]));
    row.appendChild(h("div",{style:"font-size:11.5px;color:"+C.faint+";margin:2px 0 4px;"},[cycleLabel(b)+(b.note?" · "+b.note:"")]));
+   if(b.totalInst){
+     var paidN=b.instPaid||0; var remN=Math.max(0,b.totalInst-paidN);
+     var done=remN<=0;
+     row.appendChild(h("div",{style:"display:flex;align-items:center;justify-content:space-between;background:"+(done?C.greenSoft:C.paper)+";border:1px solid "+(done?C.green:C.rule)+";border-radius:8px;padding:8px 10px;margin:6px 0;"},[
+       h("div",{style:"font-size:12px;font-weight:700;color:"+(done?C.green:C.ink)+";"},[done?("All "+b.totalInst+" payments done ✓"):("Payment "+paidN+" of "+b.totalInst+"  ·  "+remN+" left")]),
+       h("div",{style:"display:flex;gap:6px;"},[
+         h("button",{style:"border:1px solid "+C.rule+";background:#fff;color:"+C.ink+";border-radius:6px;width:30px;height:30px;font-size:16px;font-weight:700;",
+           onclick:function(){if((b.instPaid||0)>0){b.instPaid=(b.instPaid||0)-1;saveTpl();render();}}},["\u2212"]),
+         h("button",{style:"border:1px solid "+C.ink+";background:"+C.ink+";color:#fff;border-radius:6px;width:30px;height:30px;font-size:16px;font-weight:700;",
+           onclick:function(){if((b.instPaid||0)<b.totalInst){b.instPaid=(b.instPaid||0)+1;saveTpl();render();}}},["+"])
+       ])
+     ]));
+     var ipct=Math.min(100,(paidN/b.totalInst)*100);
+     row.appendChild(h("div",{style:"height:6px;background:"+C.rule+";border-radius:99px;overflow:hidden;margin-bottom:4px;"},[
+       h("div",{style:"height:100%;border-radius:99px;width:"+ipct+"%;background:"+(done?C.green:C.ink)+";"},[])]));
+   }
    row.appendChild(h("div",{style:"display:flex;justify-content:space-between;font-size:11px;color:"+C.faint+";margin-bottom:4px;"},[
      h("span",{},["Set aside ~"+money0(wk)+"/wk  ·  +"+money0(inM)+" this month"]),
      h("span",{},[outM>0?("paid "+money0(outM)):""])]));
@@ -498,8 +531,8 @@ function renderBills(wrap){
 }
 function editBill(b){
  // open in-app editor instead of prompt chain
- if(b){ state.editBill={id:b.id,name:b.name,amount:String(b.amount),cycle:b.cycle,due:String(b.due||1),due2:b.due2?String(b.due2):"",note:b.note||"",isNew:false}; }
- else { state.editBill={id:null,name:"",amount:"",cycle:"monthly",due:"1",due2:"",note:"",isNew:true}; }
+ if(b){ state.editBill={id:b.id,name:b.name,amount:String(b.amount),cycle:b.cycle,due:String(b.due||1),due2:b.due2?String(b.due2):"",note:b.note||"",totalInst:b.totalInst?String(b.totalInst):"",instPaid:b.instPaid!=null?String(b.instPaid):"",isNew:false}; }
+ else { state.editBill={id:null,name:"",amount:"",cycle:"monthly",due:"1",due2:"",note:"",totalInst:"",instPaid:"",isNew:true}; }
  render();
 }
 function closeBillEdit(){state.editBill=null;render();}
@@ -510,8 +543,9 @@ function saveBillEdit(){
  var due=parseInt(e.due)||1; if(due<1)due=1; if(due>31)due=31;
  var rec={name:name,amount:amount,cycle:e.cycle||"monthly",due:due,note:(e.note||"").trim()};
  if(e.cycle==="fortnightly"){var d2=parseInt(e.due2)||30; if(d2<1)d2=1; if(d2>31)d2=31; rec.due2=d2;}
+ var ti=parseInt(e.totalInst)||0; if(ti>0){rec.totalInst=ti; rec.instPaid=parseInt(e.instPaid)||0; if(rec.instPaid>ti)rec.instPaid=ti;}
  if(e.isNew){rec.id=uid(); billTpl.push(rec);}
- else { var b=billTpl.filter(function(x){return x.id===e.id;})[0]; if(b){b.name=rec.name;b.amount=rec.amount;b.cycle=rec.cycle;b.due=rec.due;b.note=rec.note;b.due2=rec.due2;} }
+ else { var b=billTpl.filter(function(x){return x.id===e.id;})[0]; if(b){b.name=rec.name;b.amount=rec.amount;b.cycle=rec.cycle;b.due=rec.due;b.note=rec.note;b.due2=rec.due2;b.totalInst=rec.totalInst;if(rec.totalInst)b.instPaid=rec.instPaid;else{delete b.totalInst;delete b.instPaid;}} }
  saveTpl(); state.editBill=null; render();
 }
 function renderBillEditor(wrap){
@@ -534,6 +568,8 @@ function renderBillEditor(wrap){
    h("div",{style:"display:flex;gap:6px;flex-wrap:wrap;"},cycBtns)]));
  fields.push(field("Due day of month (1\u201331)","due","1",true));
  if(e.cycle==="fortnightly")fields.push(field("Second due day (fortnightly)","due2","30",true));
+ fields.push(field("Total installments (optional, e.g. 26)","totalInst","",true));
+ if(e.totalInst)fields.push(field("Installments already paid","instPaid","0",true));
  fields.push(field("Note (optional)","note",""));
  wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.ink+";border-radius:14px;padding:16px;margin-bottom:14px;"},
    [h("div",{style:"font-size:14px;font-weight:700;margin-bottom:12px;"},[e.isNew?"New bill":"Edit bill"])].concat(fields).concat([
