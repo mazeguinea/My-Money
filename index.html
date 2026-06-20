@@ -100,7 +100,7 @@ var DEFAULT_BILL_TPL=[
 DEFAULT_BILL_TPL.push({id:"b11",name:"Workouts",amount:230,cycle:"fortnightly",due:15,due2:30,note:"15th & 30th"});
 
 
-var expTpl,debtTpl,billTpl,months;
+var expTpl,debtTpl,billTpl,months,archived;
 function normEntries(){
  // convert bare numbers -> {id,amt}; idempotent
  var changed=false;
@@ -128,10 +128,13 @@ function refreshFromStore(){
  debtTpl=loadJSON("mm3_debt_tpl",DEFAULT_DEBT_TPL);
  billTpl=loadJSON("mm3_bill_tpl",DEFAULT_BILL_TPL);
  months=loadJSON("mm3_months",{});
+ archived=loadJSON("mm3_archived",{});
  normEntries();
 }
 refreshFromStore();
 function saveTpl(){saveJSON("mm3_exp_tpl",expTpl);saveJSON("mm3_debt_tpl",debtTpl);saveJSON("mm3_bill_tpl",billTpl);}
+function saveArchived(){saveJSON("mm3_archived",archived);}
+function archiveItem(id,name){if(!archived)archived={};archived[id]={name:name};saveArchived();}
 function saveMonths(){saveJSON("mm3_months",months);}
 
 function nowKey(){var d=new Date();return d.getFullYear()+"-"+(d.getMonth()+1);}
@@ -141,7 +144,7 @@ function shortOf(k){return keyToDate(k).toLocaleDateString(undefined,{month:"sho
 function ensureMonth(k){if(!months[k]){months[k]={in:{},out:{},payments:{},cash:[],charges:{}};saveMonths();}
  var m=months[k];if(!m.in)m.in={};if(!m.out)m.out={};if(!m.payments)m.payments={};if(!m.cash)m.cash=[];if(!m.charges)m.charges={};return m;}
 
-var state={tab:"dash",viewKey:nowKey(),payFor:null,payAmt:""};
+var state={tab:"dash",viewKey:nowKey(),payFor:null,payAmt:"",editBill:null,editExp:null,editDebt:null};
 ensureMonth(nowKey());
 
 function allMonthKeys(){var ks={};ks[nowKey()]=1;Object.keys(months).forEach(function(k){ks[k]=1;});
@@ -320,6 +323,7 @@ function monthPicker(wrap){
 /* ---------- EXPENSE POTS ---------- */
 function renderMonth(wrap){
  monthPicker(wrap);
+ if(state.editExp){renderExpEditor(wrap);return;}
  var k=state.viewKey;ensureMonth(k);
  // ---- CASH SUMMARY ----
  var tot=totalCash(k), free=freeCash(k), inPots=totalPotBalance(k);
@@ -382,7 +386,7 @@ function renderMonth(wrap){
    row.appendChild(h("div",{style:"display:flex;gap:14px;margin-top:9px;"},[
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",onclick:function(){editExp(e);}},["edit"]),
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",
-       onclick:function(){if(confirm("Remove "+e.name+" going forward?")){expTpl=expTpl.filter(function(x){return x.id!==e.id;});saveTpl();render();}}},["remove"])
+       onclick:function(){if(confirm("Remove "+e.name+" from future months?\n\nPast months keep their data.")){archiveItem(e.id,e.name);expTpl=expTpl.filter(function(x){return x.id!==e.id;});saveTpl();render();}}},["remove"])
    ]));
    wrap.appendChild(row);
  });
@@ -391,13 +395,38 @@ function renderMonth(wrap){
 }
 
 function editExp(e){
- var isNew=!e;
- var name=prompt(isNew?"Pot name:":"Name:",isNew?"":e.name);if(name===null)return;
- var what=prompt("What's it for? (short note)",isNew?"":(e.what||""));if(what===null)return;
- var monthly=prompt("Suggested monthly top-up ($):",isNew?"":String(e.monthly));if(monthly===null)return;
- monthly=parseFloat(monthly)||0;
- if(isNew){expTpl.push({id:uid(),name:name,what:what,monthly:monthly});}else{e.name=name;e.what=what;e.monthly=monthly;}
- saveTpl();render();
+ if(e){state.editExp={id:e.id,name:e.name,what:e.what||"",monthly:String(e.monthly),isNew:false};}
+ else{state.editExp={id:null,name:"",what:"",monthly:"",isNew:true};}
+ render();
+}
+function closeExpEdit(){state.editExp=null;render();}
+function saveExpEdit(){
+ var x=state.editExp; if(!x)return;
+ var name=(x.name||"").trim(); if(!name){alert("Give the pot a name.");return;}
+ var monthly=parseFloat(x.monthly)||0;
+ if(x.isNew){expTpl.push({id:uid(),name:name,what:(x.what||"").trim(),monthly:monthly});}
+ else{var e=expTpl.filter(function(p){return p.id===x.id;})[0]; if(e){e.name=name;e.what=(x.what||"").trim();e.monthly=monthly;}}
+ saveTpl(); state.editExp=null; render();
+}
+function renderExpEditor(wrap){
+ var x=state.editExp; if(!x)return;
+ function field(label,key,ph,numeric){
+   var inp=h("input",{value:x[key]||"",placeholder:ph||"",inputmode:numeric?"decimal":"text",
+     style:"width:100%;border:1px solid "+C.rule+";background:#fff;border-radius:8px;padding:10px 12px;color:"+C.ink+";font-weight:600;font-size:15px;"});
+   inp.addEventListener("input",function(ev){x[key]=ev.target.value;});
+   return h("div",{style:"margin-bottom:10px;"},[
+     h("label",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;display:block;margin-bottom:5px;"},[label]),inp]);
+ }
+ wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.ink+";border-radius:14px;padding:16px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:14px;font-weight:700;margin-bottom:12px;"},[x.isNew?"New expense pot":"Edit expense pot"]),
+   field("Name","name","e.g. Eating out"),
+   field("What's it for?","what","short note"),
+   field("Suggested monthly top-up ($)","monthly","0.00",true),
+   h("div",{style:"display:flex;gap:8px;margin-top:4px;"},[
+     h("button",{style:"flex:1;border:none;background:"+C.ink+";color:#fff;border-radius:8px;padding:12px;font-size:14px;font-weight:700;",onclick:saveExpEdit},["Save"]),
+     h("button",{style:"border:1px solid "+C.rule+";background:"+C.paper+";color:"+C.ink+";border-radius:8px;padding:12px 18px;font-size:14px;font-weight:600;",onclick:closeExpEdit},["Cancel"])
+   ])
+ ]));
 }
 
 /* ---------- DEBTS (one-way paydown) ---------- */
@@ -410,6 +439,7 @@ function cycleLabel(b){
 }
 function renderBills(wrap){
  monthPicker(wrap);
+ if(state.editBill){renderBillEditor(wrap);return;}
  var k=state.viewKey;ensureMonth(k);
  var totalWeekly=billTpl.reduce(function(s,b){return s+billWeekly(b);},0);
  var totalMonthly=billTpl.reduce(function(s,b){return s+billMonthly(b);},0);
@@ -459,7 +489,7 @@ function renderBills(wrap){
    row.appendChild(h("div",{style:"display:flex;gap:14px;margin-top:9px;"},[
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",onclick:function(){editBill(b);}},["edit"]),
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",
-       onclick:function(){if(confirm("Remove "+b.name+" going forward?")){billTpl=billTpl.filter(function(x){return x.id!==b.id;});saveTpl();render();}}},["remove"])
+       onclick:function(){if(confirm("Remove "+b.name+" from future months?\n\nPast months keep their data.")){archiveItem(b.id,b.name);billTpl=billTpl.filter(function(x){return x.id!==b.id;});saveTpl();render();}}},["remove"])
    ]));
    wrap.appendChild(row);
  });
@@ -467,19 +497,56 @@ function renderBills(wrap){
    onclick:function(){editBill(null);}},["+ Add a bill"]));
 }
 function editBill(b){
- var isNew=!b;
- var name=prompt(isNew?"Bill name:":"Name:",isNew?"":b.name);if(name===null)return;
- var amount=prompt("Amount each time ($):",isNew?"":String(b.amount));if(amount===null)return;amount=parseFloat(amount)||0;
- var cyc=prompt("Cycle: weekly / fortnightly / monthly / quarterly / yearly",isNew?"monthly":b.cycle);if(cyc===null)return;
- cyc=(cyc||"monthly").toLowerCase().trim();
- var due=prompt("Due day of month (1-31):",isNew?"1":String(b.due||1));if(due===null)return;due=parseInt(due)||1;
- var note=prompt("Note (optional):",isNew?"":(b.note||""));if(note===null)note="";
- if(isNew){billTpl.push({id:uid(),name:name,amount:amount,cycle:cyc,due:due,note:note});}
- else{b.name=name;b.amount=amount;b.cycle=cyc;b.due=due;b.note=note;}
- saveTpl();render();
+ // open in-app editor instead of prompt chain
+ if(b){ state.editBill={id:b.id,name:b.name,amount:String(b.amount),cycle:b.cycle,due:String(b.due||1),due2:b.due2?String(b.due2):"",note:b.note||"",isNew:false}; }
+ else { state.editBill={id:null,name:"",amount:"",cycle:"monthly",due:"1",due2:"",note:"",isNew:true}; }
+ render();
+}
+function closeBillEdit(){state.editBill=null;render();}
+function saveBillEdit(){
+ var e=state.editBill; if(!e)return;
+ var name=(e.name||"").trim(); if(!name){alert("Give the bill a name.");return;}
+ var amount=parseFloat(e.amount)||0;
+ var due=parseInt(e.due)||1; if(due<1)due=1; if(due>31)due=31;
+ var rec={name:name,amount:amount,cycle:e.cycle||"monthly",due:due,note:(e.note||"").trim()};
+ if(e.cycle==="fortnightly"){var d2=parseInt(e.due2)||30; if(d2<1)d2=1; if(d2>31)d2=31; rec.due2=d2;}
+ if(e.isNew){rec.id=uid(); billTpl.push(rec);}
+ else { var b=billTpl.filter(function(x){return x.id===e.id;})[0]; if(b){b.name=rec.name;b.amount=rec.amount;b.cycle=rec.cycle;b.due=rec.due;b.note=rec.note;b.due2=rec.due2;} }
+ saveTpl(); state.editBill=null; render();
+}
+function renderBillEditor(wrap){
+ var e=state.editBill; if(!e)return;
+ function field(label,key,ph,numeric){
+   var inp=h("input",{value:e[key]||"",placeholder:ph||"",inputmode:numeric?"decimal":"text",
+     style:"width:100%;border:1px solid "+C.rule+";background:#fff;border-radius:8px;padding:10px 12px;color:"+C.ink+";font-weight:600;font-size:15px;"});
+   inp.addEventListener("input",function(ev){e[key]=ev.target.value;});
+   return h("div",{style:"margin-bottom:10px;"},[
+     h("label",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;display:block;margin-bottom:5px;"},[label]),inp]);
+ }
+ var cycles=["weekly","fortnightly","monthly","quarterly","yearly"];
+ var cycBtns=cycles.map(function(c){
+   return h("button",{style:"border:1px solid "+(e.cycle===c?C.ink:C.rule)+";background:"+(e.cycle===c?C.ink:C.paper)+";color:"+(e.cycle===c?"#fff":C.ink)+";border-radius:99px;padding:6px 11px;font-size:12px;font-weight:600;",
+     onclick:function(){e.cycle=c;render();}},[c]);
+ });
+ var fields=[field("Bill name","name","e.g. Rent"),field("Amount each time ($)","amount","0.00",true)];
+ fields.push(h("div",{style:"margin-bottom:10px;"},[
+   h("label",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;display:block;margin-bottom:5px;"},["Cycle"]),
+   h("div",{style:"display:flex;gap:6px;flex-wrap:wrap;"},cycBtns)]));
+ fields.push(field("Due day of month (1\u201331)","due","1",true));
+ if(e.cycle==="fortnightly")fields.push(field("Second due day (fortnightly)","due2","30",true));
+ fields.push(field("Note (optional)","note",""));
+ wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.ink+";border-radius:14px;padding:16px;margin-bottom:14px;"},
+   [h("div",{style:"font-size:14px;font-weight:700;margin-bottom:12px;"},[e.isNew?"New bill":"Edit bill"])].concat(fields).concat([
+     h("div",{style:"display:flex;gap:8px;margin-top:4px;"},[
+       h("button",{style:"flex:1;border:none;background:"+C.ink+";color:#fff;border-radius:8px;padding:12px;font-size:14px;font-weight:700;",onclick:saveBillEdit},["Save"]),
+       h("button",{style:"border:1px solid "+C.rule+";background:"+C.paper+";color:"+C.ink+";border-radius:8px;padding:12px 18px;font-size:14px;font-weight:600;",onclick:closeBillEdit},["Cancel"])
+     ])
+   ])));
 }
 function renderDebts(wrap){
- monthPicker(wrap);var k=state.viewKey;ensureMonth(k);
+ monthPicker(wrap);
+ if(state.editDebt){renderDebtEditor(wrap);return;}
+ var k=state.viewKey;ensureMonth(k);
  var totalOwed=debtTpl.reduce(function(s,d){return s+Math.max(0,d.total-debtPaidThrough(d.id,k));},0);
  wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:14px;padding:16px 18px;margin-bottom:14px;"},[
    h("div",{style:"font-size:12px;color:"+C.faint+";font-weight:600;"},["Still owed (through "+shortOf(k)+")"]),
@@ -535,13 +602,42 @@ function renderDebts(wrap){
    onclick:function(){editDebt(null);}},["+ Add a debt / loan"]));
 }
 function editDebt(d){
- var isNew=!d;
- var name=prompt(isNew?"Debt / loan name:":"Name:",isNew?"":d.name);if(name===null)return;
- var total=prompt("Total amount owed ($):",isNew?"":String(d.total));if(total===null)return;total=parseFloat(total)||0;
- var note=prompt("Note (optional):",isNew?"":(d.note||""));if(note===null)note="";
- var card=confirm("Is this a CREDIT CARD / revolving account you might add charges to?\n\nOK = yes (enables \"+ Charge\")\nCancel = no, fixed loan");
- if(isNew){debtTpl.push({id:uid(),name:name,total:total,note:note,isCard:card});}else{d.name=name;d.total=total;d.note=note;d.isCard=card;}
- saveTpl();render();
+ if(d){state.editDebt={id:d.id,name:d.name,total:String(d.total),note:d.note||"",isCard:!!d.isCard,isNew:false};}
+ else{state.editDebt={id:null,name:"",total:"",note:"",isCard:false,isNew:true};}
+ render();
+}
+function closeDebtEdit(){state.editDebt=null;render();}
+function saveDebtEdit(){
+ var x=state.editDebt; if(!x)return;
+ var name=(x.name||"").trim(); if(!name){alert("Give the debt a name.");return;}
+ var total=parseFloat(x.total)||0;
+ if(x.isNew){debtTpl.push({id:uid(),name:name,total:total,note:(x.note||"").trim(),isCard:!!x.isCard});}
+ else{var d=debtTpl.filter(function(p){return p.id===x.id;})[0]; if(d){d.name=name;d.total=total;d.note=(x.note||"").trim();d.isCard=!!x.isCard;}}
+ saveTpl(); state.editDebt=null; render();
+}
+function renderDebtEditor(wrap){
+ var x=state.editDebt; if(!x)return;
+ function field(label,key,ph,numeric){
+   var inp=h("input",{value:x[key]||"",placeholder:ph||"",inputmode:numeric?"decimal":"text",
+     style:"width:100%;border:1px solid "+C.rule+";background:#fff;border-radius:8px;padding:10px 12px;color:"+C.ink+";font-weight:600;font-size:15px;"});
+   inp.addEventListener("input",function(ev){x[key]=ev.target.value;});
+   return h("div",{style:"margin-bottom:10px;"},[
+     h("label",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;display:block;margin-bottom:5px;"},[label]),inp]);
+ }
+ var cardToggle=h("button",{style:"border:1px solid "+(x.isCard?C.red:C.rule)+";background:"+(x.isCard?C.redSoft:C.paper)+";color:"+(x.isCard?C.red:C.faint)+";border-radius:8px;padding:10px 12px;font-size:13px;font-weight:700;width:100%;text-align:left;",
+   onclick:function(){x.isCard=!x.isCard;render();}},[(x.isCard?"\u2713 ":"")+"Credit card / revolving (enables charges)"]);
+ wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.ink+";border-radius:14px;padding:16px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:14px;font-weight:700;margin-bottom:12px;"},[x.isNew?"New debt / loan":"Edit debt / loan"]),
+   field("Name","name","e.g. Credit Card"),
+   field("Total amount owed ($)","total","0.00",true),
+   field("Note (optional)","note",""),
+   h("div",{style:"margin-bottom:12px;"},[
+     h("label",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;display:block;margin-bottom:5px;"},["Type"]),cardToggle]),
+   h("div",{style:"display:flex;gap:8px;"},[
+     h("button",{style:"flex:1;border:none;background:"+C.ink+";color:#fff;border-radius:8px;padding:12px;font-size:14px;font-weight:700;",onclick:saveDebtEdit},["Save"]),
+     h("button",{style:"border:1px solid "+C.rule+";background:"+C.paper+";color:"+C.ink+";border-radius:8px;padding:12px 18px;font-size:14px;font-weight:600;",onclick:closeDebtEdit},["Cancel"])
+   ])
+ ]));
 }
 
 /* ---------- HISTORY ---------- */
@@ -549,6 +645,7 @@ function entryName(bk,id){
  if(bk==="payments"){var d=debtTpl.filter(function(x){return x.id===id;})[0];return d?d.name:"(removed debt)";}
  var e=expTpl.filter(function(x){return x.id===id;})[0];if(e)return e.name;
  var b=billTpl.filter(function(x){return x.id===id;})[0];if(b)return b.name+" (bill)";
+ if(archived&&archived[id])return archived[id].name+" (removed)";
  return "(removed)";
 }
 function editCharge(k,id,entryId){var arr=months[k].charges[id];var idx=-1;for(var i=0;i<arr.length;i++){if(arr[i].id===entryId){idx=i;break;}}if(idx<0)return;var v=prompt("Edit charge ($):",String(arr[idx].amt));if(v===null)return;v=parseFloat(v);if(isNaN(v)||v<=0){alert("Enter a number > 0, or Delete.");return;}arr[idx].amt=+v.toFixed(2);saveMonths();render();}
@@ -665,11 +762,14 @@ function renderDash(wrap){
  var k=state.viewKey;var m=months[k]||{in:{},out:{},payments:{},charges:{}};
  // gather all spends (out entries) for expenses+bills this month
  var cats=expTpl.concat(billTpl);
+ var seen={}; cats.forEach(function(c){seen[c.id]=c.name;});
+ // include deleted items that have spend data this month
+ Object.keys((m.out)||{}).forEach(function(id){if(!seen[id]){seen[id]=(archived&&archived[id]?archived[id].name+" (removed)":"(removed)");}});
  var perCat=[],totCash=0,totCard=0,grand=0;
- cats.forEach(function(c){
-   var arr=(m.out&&m.out[c.id])||[];var cash=0,card=0;
+ Object.keys(seen).forEach(function(id){
+   var arr=(m.out&&m.out[id])||[];var cash=0,card=0;
    arr.forEach(function(en){var a=(typeof en==="number"?en:en.amt)||0;if(isCardEntry(en))card+=a;else cash+=a;});
-   var t=cash+card;if(t>0){perCat.push({name:c.name,cash:cash,card:card,total:t});totCash+=cash;totCard+=card;grand+=t;}
+   var t=cash+card;if(t>0){perCat.push({name:seen[id],cash:cash,card:card,total:t});totCash+=cash;totCard+=card;grand+=t;}
  });
  perCat.sort(function(a,b){return b.total-a.total;});
 
@@ -720,7 +820,7 @@ function renderDash(wrap){
 
  // weekly trend (this month, by week-of) using dated entries
  var weeks={};
- cats.forEach(function(c){((m.out&&m.out[c.id])||[]).forEach(function(en){
+ Object.keys((m.out)||{}).forEach(function(id){((m.out&&m.out[id])||[]).forEach(function(en){
    if(typeof en==="number"||!en.date)return; var ws=weekStartOf(isoToDate(en.date));var key=ws.getTime();
    weeks[key]=(weeks[key]||0)+(en.amt||0);
  });});
@@ -749,8 +849,12 @@ function renderOverview(wrap){
  keys.forEach(function(k){
    var m=months[k]||{in:{},out:{},payments:{}};
    var inT=0,outT=0,debtT=0;
-   expTpl.forEach(function(e){inT+=sumArr(m.in&&m.in[e.id]);outT+=sumArr(m.out&&m.out[e.id]);});
-   billTpl.forEach(function(b){inT+=sumArr(m.in&&m.in[b.id]);outT+=sumArr(m.out&&m.out[b.id]);});
+   var counted={};
+   expTpl.forEach(function(e){counted[e.id]=1;inT+=sumArr(m.in&&m.in[e.id]);outT+=sumArr(m.out&&m.out[e.id]);});
+   billTpl.forEach(function(b){counted[b.id]=1;inT+=sumArr(m.in&&m.in[b.id]);outT+=sumArr(m.out&&m.out[b.id]);});
+   // include archived/deleted items that still have data this month
+   ["in","out"].forEach(function(bk){Object.keys(m[bk]||{}).forEach(function(id){if(counted[id])return;
+     if(bk==="in")inT+=sumArr(m.in[id]); else outT+=sumArr(m.out[id]);});});
    Object.keys(m.payments||{}).forEach(function(id){debtT+=sumArr(m.payments[id]);});
    var open=state.openMonth===k;
    var head=h("div",{style:"background:"+C.card+";border:1px solid "+(open?C.ink:C.rule)+";border-radius:12px;padding:14px 15px;margin-bottom:"+(open?"0":"9px")+";"+(open?"border-bottom-left-radius:0;border-bottom-right-radius:0;":""),
