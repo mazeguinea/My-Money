@@ -141,7 +141,7 @@ function shortOf(k){return keyToDate(k).toLocaleDateString(undefined,{month:"sho
 function ensureMonth(k){if(!months[k]){months[k]={in:{},out:{},payments:{},cash:[],charges:{}};saveMonths();}
  var m=months[k];if(!m.in)m.in={};if(!m.out)m.out={};if(!m.payments)m.payments={};if(!m.cash)m.cash=[];if(!m.charges)m.charges={};return m;}
 
-var state={tab:"month",viewKey:nowKey()};
+var state={tab:"month",viewKey:nowKey(),payFor:null,payAmt:""};
 ensureMonth(nowKey());
 
 function allMonthKeys(){var ks={};ks[nowKey()]=1;Object.keys(months).forEach(function(k){ks[k]=1;});
@@ -164,19 +164,33 @@ function chargeIn(id,k){return +sumArr((months[k]&&months[k].charges&&months[k].
 function cardDebts(){return debtTpl.filter(function(d){return d.isCard;});}
 function addCharge(debtId,amt,k){var m=ensureMonth(k);if(!m.charges[debtId])m.charges[debtId]=[];m.charges[debtId].push({id:uid(),amt:+amt.toFixed(2)});saveMonths();}
 function addPotOut(potId,amt,k){var m=ensureMonth(k);if(!m.out[potId])m.out[potId]=[];m.out[potId].push({id:uid(),amt:+amt.toFixed(2)});saveMonths();}
-function doPay(potId,label,avail,k,onDone){
- var raw=prompt("Pay "+label+" \u2014 how much?","");
- if(raw===null)return;var v=parseFloat(raw);if(isNaN(v)||v<=0)return;
- var cards=cardDebts();var useCard=false;
- if(cards.length){useCard=confirm("Pay "+money(v)+" for "+label+" with a CREDIT CARD?\n\nOK = credit card (adds to card debt, pot untouched)\nCancel = pay with cash from the pot");}
- if(useCard){
-   var cd=cards[0];
-   if(cards.length>1){var names=cards.map(function(c,i){return (i+1)+") "+c.name;}).join("\n");var pick=prompt("Which card?\n"+names,"1");if(pick===null)return;var pi=parseInt(pick)-1;if(pi>=0&&pi<cards.length)cd=cards[pi];}
-   if(!confirm("This adds "+money(v)+" of DEBT to "+cd.name+". The "+label+" pot is left untouched. Add it?"))return;
-   addCharge(cd.id,v,k);onDone();return;
- }
- if(v>avail+0.001){alert("That pot only has "+money(avail)+" set aside.\n\nSet aside more first, or pay a smaller amount by cash.");return;}
- addPotOut(potId,v,k);onDone();
+function openPay(potId,label,avail){state.payFor={potId:potId,label:label,avail:avail};state.payAmt="";render();}
+function closePay(){state.payFor=null;state.payAmt="";render();}
+function payCash(k){var f=state.payFor;var v=parseFloat(state.payAmt);if(isNaN(v)||v<=0){alert("Enter an amount first.");return;}
+ if(v>f.avail+0.001){alert("That pot only has "+money(f.avail)+" set aside.\n\nSet aside more first, or pay a smaller amount by cash.");return;}
+ addPotOut(f.potId,v,k);closePay();}
+function payCard(k,debtId){var f=state.payFor;var v=parseFloat(state.payAmt);if(isNaN(v)||v<=0){alert("Enter an amount first.");return;}
+ var cd=debtTpl.filter(function(d){return d.id===debtId;})[0];if(!cd)return;
+ if(!confirm("Add "+money(v)+" of DEBT to "+cd.name+"?\n\nThe "+f.label+" pot is left untouched \u2014 you'll owe this on "+cd.name+".")) return;
+ addCharge(debtId,v,k);closePay();}
+function renderPayPanel(parent,k){
+ var f=state.payFor;
+ var amtInp=h("input",{inputmode:"decimal",placeholder:"amount to pay",value:state.payAmt||"",
+   style:"width:100%;border:1px solid "+C.ink+";background:#fff;border-radius:8px;padding:10px 12px 10px 24px;color:"+C.ink+";font-weight:700;font-size:16px;"});
+ amtInp.addEventListener("input",function(e){state.payAmt=e.target.value;});
+ var cards=debtTpl.filter(function(d){return d.isCard;});
+ var btns=[h("button",{style:"flex:1;min-width:90px;border:none;background:"+C.ink+";color:#fff;border-radius:8px;padding:11px 0;font-size:13px;font-weight:700;",
+   onclick:function(){state.payAmt=amtInp.value;payCash(k);}},["Cash"])];
+ cards.forEach(function(c){
+   btns.push(h("button",{style:"flex:1;min-width:90px;border:1px solid "+C.red+";background:"+C.redSoft+";color:"+C.red+";border-radius:8px;padding:11px 0;font-size:13px;font-weight:700;",
+     onclick:function(){state.payAmt=amtInp.value;payCard(k,c.id);}},[c.name]));
+ });
+ parent.appendChild(h("div",{style:"margin-top:11px;padding:12px;border:1.5px solid "+C.ink+";border-radius:10px;background:"+C.paper+";"},[
+   h("div",{style:"font-size:12px;font-weight:700;margin-bottom:8px;"},["Pay "+f.label+" \u2014 choose how:"]),
+   h("div",{style:"position:relative;margin-bottom:10px;"},[h("span",{style:"position:absolute;left:12px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:16px;"},["$"]),amtInp]),
+   h("div",{style:"display:flex;gap:7px;flex-wrap:wrap;"},btns),
+   h("button",{style:"margin-top:9px;border:none;background:none;color:"+C.faint+";font-size:12px;text-decoration:underline;",onclick:closePay},["cancel"])
+ ]));
 }
 function cashInThrough(uptoKey){var lim=keyToDate(uptoKey);var s=0;
  Object.keys(months).forEach(function(k){if(keyToDate(k)<=lim)s+=sumArr(months[k].cash);});return +s.toFixed(2);}
@@ -396,8 +410,9 @@ function renderBills(wrap){
      h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:9px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:13px;"},["$"]),inInp]),
      h("button",{style:"border:none;background:"+C.green+";color:#fff;border-radius:8px;padding:0 12px;font-size:12.5px;font-weight:700;",onclick:addIn},["+ Aside"]),
      h("button",{style:"flex:1;border:none;background:"+C.red+";color:#fff;border-radius:8px;padding:10px 0;font-size:12.5px;font-weight:700;",
-       onclick:function(){doPay(b.id,b.name,billBalance(b.id,k),k,function(){render();});}},["− Pay (cash / card)"])
+       onclick:function(){openPay(b.id,b.name,billBalance(b.id,k));}},["− Pay (cash / card)"])
    ]));
+   if(state.payFor&&state.payFor.potId===b.id)renderPayPanel(row,k);
    row.appendChild(h("div",{style:"display:flex;gap:14px;margin-top:9px;"},[
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",onclick:function(){editBill(b);}},["edit"]),
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",
