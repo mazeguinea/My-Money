@@ -149,9 +149,11 @@ function allMonthKeys(){var ks={};ks[nowKey()]=1;Object.keys(months).forEach(fun
 
 function sumArr(a){return (a||[]).reduce(function(s,x){return s+(typeof x==="number"?x:(x&&x.amt||0));},0);}
 /* pot balance across ALL months up to & including uptoKey */
+function isCardEntry(en){return en&&typeof en==="object"&&en.paidBy==="card";}
+function sumCash(a){return (a||[]).reduce(function(s,x){if(isCardEntry(x))return s;return s+(typeof x==="number"?x:(x&&x.amt||0));},0);}
 function potBalance(expId,uptoKey){var lim=keyToDate(uptoKey);var bal=0;
  Object.keys(months).forEach(function(k){if(keyToDate(k)<=lim){
-   bal+=sumArr(months[k].in&&months[k].in[expId]); bal-=sumArr(months[k].out&&months[k].out[expId]);}});
+   bal+=sumCash(months[k].in&&months[k].in[expId]); bal-=sumCash(months[k].out&&months[k].out[expId]);}});
  return +bal.toFixed(2);}
 function inThisMonth(expId,k){return +sumArr((months[k]&&months[k].in&&months[k].in[expId])).toFixed(2);}
 function outThisMonth(expId,k){return +sumArr((months[k]&&months[k].out&&months[k].out[expId])).toFixed(2);}
@@ -162,8 +164,12 @@ function debtPaidIn(id,k){return +sumArr((months[k]&&months[k].payments&&months[
 function chargeThrough(id,uptoKey){var lim=keyToDate(uptoKey);var s=0;Object.keys(months).forEach(function(k){if(keyToDate(k)<=lim)s+=sumArr(months[k].charges&&months[k].charges[id]);});return +s.toFixed(2);}
 function chargeIn(id,k){return +sumArr((months[k]&&months[k].charges&&months[k].charges[id])).toFixed(2);}
 function cardDebts(){return debtTpl.filter(function(d){return d.isCard;});}
-function addCharge(debtId,amt,k){var m=ensureMonth(k);if(!m.charges[debtId])m.charges[debtId]=[];m.charges[debtId].push({id:uid(),amt:+amt.toFixed(2)});saveMonths();}
-function addPotOut(potId,amt,k){var m=ensureMonth(k);if(!m.out[potId])m.out[potId]=[];m.out[potId].push({id:uid(),amt:+amt.toFixed(2)});saveMonths();}
+function addCharge(debtId,amt,k){var m=ensureMonth(k);if(!m.charges[debtId])m.charges[debtId]=[];m.charges[debtId].push({id:uid(),amt:+amt.toFixed(2),date:todayISO()});saveMonths();}
+function todayISO(){var d=new Date();return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate();}
+function addPotOut(potId,amt,k,meta){var m=ensureMonth(k);if(!m.out[potId])m.out[potId]=[];
+ var e={id:uid(),amt:+amt.toFixed(2),date:todayISO(),paidBy:(meta&&meta.paidBy)||"cash"};
+ if(meta&&meta.debtId)e.debtId=meta.debtId;
+ m.out[potId].push(e);saveMonths();}
 function openPay(potId,label,avail){state.payFor={potId:potId,label:label,avail:avail};state.payAmt="";render();}
 function closePay(){state.payFor=null;state.payAmt="";render();}
 function payCash(k){var f=state.payFor;var v=parseFloat(state.payAmt);if(isNaN(v)||v<=0){alert("Enter an amount first.");return;}
@@ -171,8 +177,12 @@ function payCash(k){var f=state.payFor;var v=parseFloat(state.payAmt);if(isNaN(v
  addPotOut(f.potId,v,k);closePay();}
 function payCard(k,debtId){var f=state.payFor;var v=parseFloat(state.payAmt);if(isNaN(v)||v<=0){alert("Enter an amount first.");return;}
  var cd=debtTpl.filter(function(d){return d.id===debtId;})[0];if(!cd)return;
- if(!confirm("Add "+money(v)+" of DEBT to "+cd.name+"?\n\nThe "+f.label+" pot is left untouched \u2014 you'll owe this on "+cd.name+".")) return;
- addCharge(debtId,v,k);closePay();}
+ if(!confirm("Spend "+money(v)+" on "+f.label+" using "+cd.name+"?\n\nThis counts as a "+f.label+" spend AND adds "+money(v)+" to your "+cd.name+" balance. The pot's cash is left untouched.")) return;
+ addCharge(debtId,v,k);
+ // record the category spend too, flagged as card (does NOT reduce pot balance in our cash math? it does via out...)
+ // To keep pot CASH untouched we log a spend with paidBy:card and EXCLUDE card-spends from pot balance + cash math.
+ addPotOut(f.potId,v,k,{paidBy:"card",debtId:debtId});
+ closePay();}
 function renderPayPanel(parent,k){
  var f=state.payFor;
  var amtInp=h("input",{inputmode:"decimal",placeholder:"amount to pay",value:state.payAmt||"",
@@ -233,10 +243,10 @@ function render(){
  wrap.appendChild(h("div",{style:"margin-bottom:14px;"},[
    h("div",{style:"font-size:11px;letter-spacing:.2em;color:"+C.gold+";font-weight:700;"},["MY MONEY"]),
    h("h1",{style:"font-family:Georgia,serif;font-size:30px;line-height:1.05;margin-top:6px;font-weight:700;"},
-     [state.tab==="month"?"Expense pots":state.tab==="bills"?"Bills":state.tab==="debts"?"Debt tracker":"Month overview"])
+     [state.tab==="month"?"Expense pots":state.tab==="bills"?"Bills":state.tab==="debts"?"Debt tracker":state.tab==="dash"?"Dashboard":"Month overview"])
  ]));
  var tabs=h("div",{style:"display:flex;gap:4px;background:"+C.rule+";padding:4px;border-radius:10px;margin-bottom:16px;"});
- [["month","Expenses"],["bills","Bills"],["debts","Debts"],["overview","History"]].forEach(function(t){
+ [["month","Expenses"],["bills","Bills"],["debts","Debts"],["dash","Dashboard"],["overview","History"]].forEach(function(t){
    var on=state.tab===t[0];
    tabs.appendChild(h("button",{style:"flex:1;border:none;background:"+(on?C.card:"transparent")+";padding:10px 0;border-radius:7px;font-size:13.5px;font-weight:600;color:"+(on?C.ink:C.faint)+";"+(on?"box-shadow:0 1px 2px rgba(0,0,0,.06);":""),
      onclick:function(){state.tab=t[0];render();}},[t[1]]));
@@ -248,6 +258,7 @@ function render(){
  if(state.tab==="month")renderMonth(wrap);
  else if(state.tab==="bills")renderBills(wrap);
  else if(state.tab==="debts")renderDebts(wrap);
+ else if(state.tab==="dash")renderDash(wrap);
  else renderOverview(wrap);
  wrap.appendChild(h("div",{style:"font-size:11px;color:"+C.faint+";text-align:center;line-height:1.5;margin-top:14px;"},
    ["Saved on this device · pots carry over · each month kept"]));
@@ -517,6 +528,89 @@ function delEntry(k,bk,id,entryId){
  if(!confirm("Delete this entry?"))return;
  var m=months[k];m[bk][id]=m[bk][id].filter(function(x){return x.id!==entryId;});saveMonths();render();
 }
+function isoToDate(s){if(!s)return null;var p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2]||1);}
+function weekStartOf(d){var x=new Date(d);var day=(x.getDay()+6)%7;x.setHours(0,0,0,0);x.setDate(x.getDate()-day);return x;}
+function renderDash(wrap){
+ monthPicker(wrap);
+ var k=state.viewKey;var m=months[k]||{in:{},out:{},payments:{},charges:{}};
+ // gather all spends (out entries) for expenses+bills this month
+ var cats=expTpl.concat(billTpl);
+ var perCat=[],totCash=0,totCard=0,grand=0;
+ cats.forEach(function(c){
+   var arr=(m.out&&m.out[c.id])||[];var cash=0,card=0;
+   arr.forEach(function(en){var a=(typeof en==="number"?en:en.amt)||0;if(isCardEntry(en))card+=a;else cash+=a;});
+   var t=cash+card;if(t>0){perCat.push({name:c.name,cash:cash,card:card,total:t});totCash+=cash;totCard+=card;grand+=t;}
+ });
+ perCat.sort(function(a,b){return b.total-a.total;});
+
+ // summary
+ wrap.appendChild(h("div",{style:"background:"+C.ink+";color:"+C.paper+";border-radius:14px;padding:16px 18px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:11px;letter-spacing:.1em;color:#C9C0B0;font-weight:700;"},["TOTAL SPENT \u2014 "+labelOf(k)]),
+   h("div",{style:"font-family:Georgia,serif;font-size:30px;font-weight:700;margin-top:2px;"},[money(grand)]),
+   h("div",{style:"display:flex;gap:18px;margin-top:10px;font-size:12.5px;"},[
+     h("span",{},[h("span",{style:"color:#9FC9B0;font-weight:700;"},[money0(totCash)]),h("span",{style:"color:#C9C0B0;"},[" cash"])]),
+     h("span",{},[h("span",{style:"color:#E8A99B;font-weight:700;"},[money0(totCard)]),h("span",{style:"color:#C9C0B0;"},[" card"])])
+   ])
+ ]));
+
+ if(grand===0){wrap.appendChild(h("div",{style:"font-size:13px;color:"+C.faint+";padding:10px 2px;"},["No spending logged this month yet. Spend from a pot (cash or card) and it'll show here."]));return;}
+
+ // cash vs card bar
+ var cashPct=Math.round((totCash/grand)*100);
+ wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:9px;"},["Cash vs card"]),
+   h("div",{style:"display:flex;height:18px;border-radius:6px;overflow:hidden;"},[
+     h("div",{style:"width:"+cashPct+"%;background:"+C.green+";"},[]),
+     h("div",{style:"width:"+(100-cashPct)+"%;background:"+C.red+";"},[])
+   ]),
+   h("div",{style:"display:flex;justify-content:space-between;font-size:11.5px;color:"+C.faint+";margin-top:6px;"},[
+     h("span",{},[money0(totCash)+" cash ("+cashPct+"%)"]),h("span",{},[money0(totCard)+" card ("+(100-cashPct)+"%)"])])
+ ]));
+
+ // per-category
+ var maxCat=Math.max.apply(null,perCat.map(function(x){return x.total;}));
+ var catBox=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:14px;"});
+ catBox.appendChild(h("div",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:11px;"},["Spending by category"]));
+ perCat.forEach(function(c){
+   var cashW=(c.cash/maxCat)*100, cardW=(c.card/maxCat)*100;
+   catBox.appendChild(h("div",{style:"margin-bottom:11px;"},[
+     h("div",{style:"display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;"},[
+       h("span",{style:"font-weight:600;"},[c.name]),h("span",{style:"font-weight:700;"},[money(c.total)])]),
+     h("div",{style:"display:flex;height:8px;border-radius:99px;overflow:hidden;background:"+C.rule+";"},[
+       h("div",{style:"width:"+cashW+"%;background:"+C.green+";"},[]),
+       h("div",{style:"width:"+cardW+"%;background:"+C.red+";"},[])
+     ])
+   ]));
+ });
+ catBox.appendChild(h("div",{style:"display:flex;gap:14px;margin-top:4px;font-size:11px;color:"+C.faint+";"},[
+   h("span",{},[h("span",{style:"display:inline-block;width:9px;height:9px;border-radius:2px;background:"+C.green+";margin-right:4px;"},[]),"cash"]),
+   h("span",{},[h("span",{style:"display:inline-block;width:9px;height:9px;border-radius:2px;background:"+C.red+";margin-right:4px;"},[]),"card"])
+ ]));
+ wrap.appendChild(catBox);
+
+ // weekly trend (this month, by week-of) using dated entries
+ var weeks={};
+ cats.forEach(function(c){((m.out&&m.out[c.id])||[]).forEach(function(en){
+   if(typeof en==="number"||!en.date)return; var ws=weekStartOf(isoToDate(en.date));var key=ws.getTime();
+   weeks[key]=(weeks[key]||0)+(en.amt||0);
+ });});
+ var wkKeys=Object.keys(weeks).sort();
+ var trendBox=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:14px;"});
+ trendBox.appendChild(h("div",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:11px;"},["Weekly spend (this month)"]));
+ if(wkKeys.length===0){trendBox.appendChild(h("div",{style:"font-size:12px;color:"+C.faint+";"},["Weekly view fills in as you log dated spends from now on."]));}
+ else{
+   var maxW=Math.max.apply(null,wkKeys.map(function(x){return weeks[x];}));
+   wkKeys.forEach(function(x){var d=new Date(+x);var lbl="wk "+d.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+     trendBox.appendChild(h("div",{style:"display:flex;align-items:center;gap:10px;margin-bottom:7px;"},[
+       h("span",{style:"width:70px;font-size:11.5px;color:"+C.faint+";"},[lbl]),
+       h("div",{style:"flex:1;height:10px;background:"+C.rule+";border-radius:99px;overflow:hidden;"},[
+         h("div",{style:"height:100%;width:"+((weeks[x]/maxW)*100)+"%;background:"+C.ink+";border-radius:99px;"},[])]),
+       h("span",{style:"width:60px;text-align:right;font-size:12px;font-weight:700;"},[money0(weeks[x])])
+     ]));
+   });
+ }
+ wrap.appendChild(trendBox);
+}
 function renderOverview(wrap){
  var keys=allMonthKeys().slice().reverse();
  wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:13px 15px;font-size:12.5px;line-height:1.5;color:"+C.ink+";margin-bottom:14px;"},
@@ -549,7 +643,7 @@ function renderOverview(wrap){
          (m[bk][id]||[]).forEach(function(en){
            any=true;
            rows.push(h("div",{style:"display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid "+C.rule+";"},[
-             h("span",{style:"flex:1;font-size:13px;"},[entryName(bk,id)]),
+             h("span",{style:"flex:1;font-size:13px;"},[entryName(bk,id),(en.paidBy==="card"?h("span",{style:"font-size:8.5px;font-weight:800;color:"+C.red+";border:1px solid "+C.red+";border-radius:3px;padding:0 3px;margin-left:5px;"},["CARD"]):null)]),
              h("span",{style:"font-size:13.5px;font-weight:700;color:"+color+";min-width:70px;text-align:right;"},[money(en.amt)]),
              h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",
                onclick:function(){editEntry(k,bk,id,en.id);}},["edit"]),
