@@ -322,20 +322,13 @@ function renderMonth(wrap){
      style:"width:100%;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:9px 8px 9px 20px;color:"+C.ink+";font-weight:700;font-size:14px;"});
    function addIn(){var v=parseFloat(inInp.value);if(!v||v<=0)return;var m=ensureMonth(k);if(!m.in[e.id])m.in[e.id]=[];m.in[e.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
    inInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addIn();});
-   var outInp=h("input",{inputmode:"decimal",placeholder:"spend",
-     style:"width:100%;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:9px 8px 9px 20px;color:"+C.ink+";font-weight:700;font-size:14px;"});
-   function addOut(){var v=parseFloat(outInp.value);if(!v||v<=0)return;
-     var avail=potBalance(e.id,k);
-     if(v>avail+0.001){alert("This pot only has "+money(avail)+" in it.\n\nSet aside the money first (use \"+ In\"), then spend it. A pot can't go negative.");return;}
-     var m=ensureMonth(k);if(!m.out[e.id])m.out[e.id]=[];m.out[e.id].push({id:uid(),amt:+v.toFixed(2)});saveMonths();render();}
-   outInp.addEventListener("keydown",function(ev){if(ev.key==="Enter")addOut();});
-
    row.appendChild(h("div",{style:"display:flex;gap:7px;margin-top:11px;"},[
      h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:9px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:13px;"},["$"]),inInp]),
-     h("button",{style:"border:none;background:"+C.green+";color:#fff;border-radius:8px;padding:0 13px;font-size:12.5px;font-weight:700;",onclick:addIn},["+ In"]),
-     h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:9px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:13px;"},["$"]),outInp]),
-     h("button",{style:"border:none;background:"+C.red+";color:#fff;border-radius:8px;padding:0 13px;font-size:12.5px;font-weight:700;",onclick:addOut},["− Spend"])
+     h("button",{style:"border:none;background:"+C.green+";color:#fff;border-radius:8px;padding:0 14px;font-size:12.5px;font-weight:700;",onclick:addIn},["+ In"]),
+     h("button",{style:"flex:1;border:none;background:"+C.red+";color:#fff;border-radius:8px;padding:10px 0;font-size:12.5px;font-weight:700;",
+       onclick:function(){openPay(e.id,e.name,potBalance(e.id,k));}},["− Spend (cash / card)"])
    ]));
+   if(state.payFor&&state.payFor.potId===e.id)renderPayPanel(row,k);
    row.appendChild(h("div",{style:"display:flex;gap:14px;margin-top:9px;"},[
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",onclick:function(){editExp(e);}},["edit"]),
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",
