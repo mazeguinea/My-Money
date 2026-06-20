@@ -25,8 +25,8 @@
    PASTE YOUR TWO SUPABASE VALUES BETWEEN THE QUOTES.
    (Same ones you already used — Project URL + publishable key.)
    ============================================================ */
-var SUPABASE_URL = "";
-var SUPABASE_KEY = "";
+var SUPABASE_URL = "https://sxfenjxzrhavutolxjmk.supabase.co";
+var SUPABASE_KEY = "sb_publishable_bjROj1N5hNGw0jcuK0vbQQ_LOQcSbH7";
 /* ============================================================ */
 var sb=null;
 if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){try{sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);}catch(e){sb=null;}}
@@ -123,20 +123,21 @@ function normEntries(){
      if(n.indexOf("credit")>=0||n.indexOf("card")>=0||n.indexOf("afterpay")>=0){d.isCard=true;ch2=true;}}});
    if(ch2)saveJSON("mm3_debt_tpl",debtTpl);}
 
- // one-time migration: move Fujin from debts to bills (installment tracker)
- if(typeof debtTpl!=="undefined"&&debtTpl&&typeof billTpl!=="undefined"&&billTpl){
-   var fi=-1; for(var z=0;z<debtTpl.length;z++){if((debtTpl[z].name||"").toLowerCase().indexOf("fujin")>=0){fi=z;break;}}
-   if(fi>=0){
-     var fd=debtTpl[fi];
-     var already=billTpl.some(function(b){return (b.name||"").toLowerCase().indexOf("fujin")>=0;});
-     if(!already){
-       // derive installments paid from how much of the total has been paid, if any
-       var paid=(typeof debtPaidThrough==="function")?0:0;
-       billTpl.push({id:"fujin_bill",name:fd.name,amount:558.63,cycle:"monthly",due:1,note:"car with Randall",totalInst:26,instPaid:0});
-     }
-     debtTpl.splice(fi,1);
-     saveJSON("mm3_debt_tpl",debtTpl); saveJSON("mm3_bill_tpl",billTpl);
+ // self-healing migration: ensure Fujin exists in BILLS (with installment tracker).
+ if(typeof billTpl!=="undefined"&&billTpl){
+   var inBills=billTpl.some(function(b){return (b.name||"").toLowerCase().indexOf("fujin")>=0;});
+   var changedF=false;
+   if(!inBills){
+     billTpl.push({id:"fujin_bill",name:"Fujin (car · my half)",amount:558.63,cycle:"monthly",due:1,note:"car with Randall",totalInst:26,instPaid:0});
+     changedF=true;
    }
+   // remove any leftover Fujin from debts
+   if(typeof debtTpl!=="undefined"&&debtTpl){
+     var before=debtTpl.length;
+     debtTpl=debtTpl.filter(function(d){return (d.name||"").toLowerCase().indexOf("fujin")<0;});
+     if(debtTpl.length!==before){saveJSON("mm3_debt_tpl",debtTpl);}
+   }
+   if(changedF)saveJSON("mm3_bill_tpl",billTpl);
  }
  if(changed)saveJSON("mm3_months",months);
 }
