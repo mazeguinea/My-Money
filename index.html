@@ -116,6 +116,11 @@ function normEntries(){
    });
  });
  Object.keys(months).forEach(function(k){var m=months[k];if(!m.cash)m.cash=[];if(!m.charges)m.charges={};});
+ // auto-flag credit-card-like debts so the card features show up on existing data
+ if(typeof debtTpl!=="undefined"&&debtTpl){var ch2=false;debtTpl.forEach(function(d){
+   if(d.isCard===undefined){var n=(d.name||"").toLowerCase();
+     if(n.indexOf("credit")>=0||n.indexOf("card")>=0||n.indexOf("afterpay")>=0){d.isCard=true;ch2=true;}}});
+   if(ch2)saveJSON("mm3_debt_tpl",debtTpl);}
  if(changed)saveJSON("mm3_months",months);
 }
 function refreshFromStore(){
@@ -459,7 +464,9 @@ function renderDebts(wrap){
          h("button",{style:"border:1px solid "+C.red+";background:#fff;color:"+C.red+";border-radius:8px;padding:0 16px;font-size:14px;font-weight:700;",onclick:chargeIt},["+ Charge"])])
      ]));
    }
-   sec.appendChild(h("div",{style:"display:flex;gap:14px;margin-top:10px;"},[
+   sec.appendChild(h("div",{style:"display:flex;gap:14px;margin-top:10px;align-items:center;"},[
+     h("button",{style:"border:1px solid "+(d.isCard?C.red:C.rule)+";background:"+(d.isCard?C.redSoft:C.paper)+";color:"+(d.isCard?C.red:C.faint)+";border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;",
+       onclick:function(){d.isCard=!d.isCard;saveTpl();render();}},[d.isCard?"✓ credit card":"mark as credit card"]),
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",onclick:function(){editDebt(d);}},["edit"]),
      h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;",
        onclick:function(){if(confirm("Remove "+d.name+"?")){debtTpl=debtTpl.filter(function(x){return x.id!==d.id;});saveTpl();render();}}},["remove"])
