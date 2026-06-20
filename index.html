@@ -141,7 +141,7 @@ function shortOf(k){return keyToDate(k).toLocaleDateString(undefined,{month:"sho
 function ensureMonth(k){if(!months[k]){months[k]={in:{},out:{},payments:{},cash:[],charges:{}};saveMonths();}
  var m=months[k];if(!m.in)m.in={};if(!m.out)m.out={};if(!m.payments)m.payments={};if(!m.cash)m.cash=[];if(!m.charges)m.charges={};return m;}
 
-var state={tab:"month",viewKey:nowKey(),payFor:null,payAmt:""};
+var state={tab:"dash",viewKey:nowKey(),payFor:null,payAmt:""};
 ensureMonth(nowKey());
 
 function allMonthKeys(){var ks={};ks[nowKey()]=1;Object.keys(months).forEach(function(k){ks[k]=1;});
@@ -237,6 +237,44 @@ function h(tag,attrs,kids){var e=document.createElement(tag);
  (kids||[]).forEach(function(c){if(c==null)return;e.appendChild(typeof c==="string"?document.createTextNode(c):c);});
  return e;}
 
+
+function nextOccur(dayOfMonth){ // next date (today or future) matching day-of-month, within ~2 months
+ var now=new Date(); now.setHours(0,0,0,0);
+ for(var add=0; add<70; add++){var d=new Date(now); d.setDate(d.getDate()+add); if(d.getDate()===dayOfMonth) return d;}
+ return null;
+}
+function upcomingDue(){
+ var now=new Date(); now.setHours(0,0,0,0);
+ var horizon=new Date(now); horizon.setDate(horizon.getDate()+7);
+ var items=[];
+ // bills
+ billTpl.forEach(function(b){
+   var days=[]; if(b.due)days.push(b.due); if(b.due2)days.push(b.due2);
+   days.forEach(function(dd){
+     var nd=nextOccur(dd); if(nd && nd>=now && nd<=horizon){ items.push({name:b.name, amt:b.amount, date:nd}); }
+   });
+ });
+ // credit card: always 4th, amount = current balance
+ var cc=debtTpl.filter(function(d){return (d.name||"").toLowerCase().indexOf("credit")>=0;})[0];
+ if(cc){var nd=nextOccur(4); if(nd&&nd>=now&&nd<=horizon){var bal=cc.total+chargeThrough(cc.id,nowKey())-debtPaidThrough(cc.id,nowKey()); if(bal>0)items.push({name:cc.name,amt:bal,date:nd,card:true});}}
+ items.sort(function(a,b){return a.date-b.date;});
+ return items;
+}
+function renderDueBanner(wrap){
+ var items=upcomingDue(); if(items.length===0)return;
+ var now=new Date(); now.setHours(0,0,0,0);
+ var rows=items.map(function(it){
+   var dd=Math.round((it.date-now)/86400000);
+   var when = dd===0?"today" : dd===1?"tomorrow" : "in "+dd+" days";
+   return h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-top:1px solid rgba(255,255,255,0.15);"},[
+     h("span",{style:"font-size:13px;"},[it.name+(it.card?" (card)":"")+" \u00b7 "+when]),
+     h("span",{style:"font-size:13.5px;font-weight:700;"},[money0(it.amt)])
+   ]);
+ });
+ wrap.appendChild(h("div",{style:"background:"+C.gold+";color:#fff;border-radius:12px;padding:12px 15px;margin-bottom:14px;"},
+   [h("div",{style:"font-size:11px;letter-spacing:.1em;font-weight:800;margin-bottom:2px;"},["\u23f0 DUE IN THE NEXT 7 DAYS"])].concat(rows)
+ ));
+}
 function render(){
  var root=document.getElementById("app");root.innerHTML="";
  var wrap=h("div",{style:"max-width:540px;margin:0 auto;padding:22px 14px 44px;"});
@@ -245,8 +283,9 @@ function render(){
    h("h1",{style:"font-family:Georgia,serif;font-size:30px;line-height:1.05;margin-top:6px;font-weight:700;"},
      [state.tab==="month"?"Expense pots":state.tab==="bills"?"Bills":state.tab==="debts"?"Debt tracker":state.tab==="dash"?"Dashboard":"Month overview"])
  ]));
+ renderDueBanner(wrap);
  var tabs=h("div",{style:"display:flex;gap:4px;background:"+C.rule+";padding:4px;border-radius:10px;margin-bottom:16px;"});
- [["month","Expenses"],["bills","Bills"],["debts","Debts"],["dash","Dashboard"],["overview","History"]].forEach(function(t){
+ [["dash","Dashboard"],["month","Expenses"],["bills","Bills"],["debts","Debts"],["overview","History"]].forEach(function(t){
    var on=state.tab===t[0];
    tabs.appendChild(h("button",{style:"flex:1;border:none;background:"+(on?C.card:"transparent")+";padding:10px 0;border-radius:7px;font-size:13.5px;font-weight:600;color:"+(on?C.ink:C.faint)+";"+(on?"box-shadow:0 1px 2px rgba(0,0,0,.06);":""),
      onclick:function(){state.tab=t[0];render();}},[t[1]]));
@@ -528,10 +567,101 @@ function delEntry(k,bk,id,entryId){
  if(!confirm("Delete this entry?"))return;
  var m=months[k];m[bk][id]=m[bk][id].filter(function(x){return x.id!==entryId;});saveMonths();render();
 }
+
+function paydaysWithin(days){ // Wednesdays in (now, now+days]
+ var now=new Date(); now.setHours(0,0,0,0); var c=0;
+ for(var i=1;i<=days;i++){var d=new Date(now); d.setDate(d.getDate()+i); if(d.getDay()===3) c++;}
+ return c;
+}
+function remainingWednesdaysThisMonth(){
+ var now=new Date(); now.setHours(0,0,0,0); var c=0; var mth=now.getMonth();
+ var d=new Date(now); d.setDate(d.getDate()+1);
+ while(d.getMonth()===mth){ if(d.getDay()===3) c++; d.setDate(d.getDate()+1); }
+ // include today if today is Wednesday and not yet "paid"? keep simple: future Wednesdays only
+ return c;
+}
+function billOutThisMonth(b,k){ // cash+card spend recorded against this bill this month
+ var arr=(months[k]&&months[k].out&&months[k].out[b.id])||[];
+ return arr.reduce(function(s,en){return s+(typeof en==="number"?en:en.amt||0);},0);
+}
+function billCardThisMonth(b,k){
+ var arr=(months[k]&&months[k].out&&months[k].out[b.id])||[];
+ return arr.reduce(function(s,en){return s+((en&&en.paidBy==="card")?(en.amt||0):0);},0);
+}
+function renderCoverage(wrap){
+ var k=nowKey(); var WAGE=1850.54;
+ var cashNow=totalCash(k);
+ // --- WEEK ---
+ var due7=upcomingDue(); // {name,amt,date,card?}
+ // card items in upcoming are the credit card itself; bills are cash-assumed unless already paid
+ var weekCashNeed=0, weekList=[];
+ due7.forEach(function(it){
+   if(it.card){ return; } // the credit card's own due handled in card line
+   // find the bill, check if already handled this month
+   var b=billTpl.filter(function(x){return x.name===it.name;})[0];
+   var handled=false;
+   if(b){ if(billOutThisMonth(b,k) >= b.amount*0.999) handled=true; }
+   if(!handled){ weekCashNeed+=it.amt; weekList.push(it); }
+ });
+ var payIn7=paydaysWithin(7)*WAGE;
+ var weekHave=cashNow+payIn7;
+ var weekDiff=weekHave-weekCashNeed;
+
+ // card amount due on the 4th = current credit card balance
+ var cc=debtTpl.filter(function(d){return (d.name||"").toLowerCase().indexOf("credit")>=0;})[0];
+ var cardDue= cc? Math.max(0, cc.total+chargeThrough(cc.id,k)-debtPaidThrough(cc.id,k)) : 0;
+
+ // --- MONTH ---
+ var monthBillsNeed=0;
+ billTpl.forEach(function(b){
+   if(billOutThisMonth(b,k) >= b.amount*0.999) return; // handled
+   // count toward this month if its due day is still ahead this month OR generally part of month
+   monthBillsNeed += billMonthly(b); // monthly-equivalent share so quarterly/yearly are fair
+ });
+ // expenses: remaining of monthly targets not yet funded this month
+ var monthExpNeed=0;
+ expTpl.forEach(function(e){ var funded=inThisMonth(e.id,k); var gap=(e.monthly||0)-funded; if(gap>0) monthExpNeed+=gap; });
+ var monthNeed=monthBillsNeed+monthExpNeed;
+ var payRestMonth=remainingWednesdaysThisMonth()*WAGE;
+ var monthHave=cashNow+payRestMonth;
+ var monthDiff=monthHave-monthNeed;
+
+ function verdict(diff){ return diff>=0
+   ? {txt:"You're covered \u2014 "+money0(diff)+" to spare", col:C.green, bg:C.greenSoft}
+   : {txt:"Short by "+money0(-diff), col:C.red, bg:C.redSoft}; }
+ var w=verdict(weekDiff), mo=verdict(monthDiff);
+
+ var box=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:14px;"});
+ box.appendChild(h("div",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:11px;"},["Can I cover it?"]));
+
+ // WEEK
+ box.appendChild(h("div",{style:"border:1px solid "+w.col+";background:"+w.bg+";border-radius:10px;padding:11px 13px;margin-bottom:10px;"},[
+   h("div",{style:"font-size:12px;font-weight:700;color:"+w.col+";margin-bottom:4px;"},["NEXT 7 DAYS \u2014 "+w.txt]),
+   h("div",{style:"font-size:11.5px;color:"+C.ink+";line-height:1.5;"},[
+     "Cash now "+money0(cashNow)+(payIn7>0?" + pay "+money0(payIn7):"")+" = "+money0(weekHave)+" available, vs "+money0(weekCashNeed)+" due in cash"
+   ])
+ ]));
+ // MONTH
+ box.appendChild(h("div",{style:"border:1px solid "+mo.col+";background:"+mo.bg+";border-radius:10px;padding:11px 13px;margin-bottom:10px;"},[
+   h("div",{style:"font-size:12px;font-weight:700;color:"+mo.col+";margin-bottom:4px;"},["THIS MONTH \u2014 "+mo.txt]),
+   h("div",{style:"font-size:11.5px;color:"+C.ink+";line-height:1.5;"},[
+     "Cash "+money0(cashNow)+(payRestMonth>0?" + remaining pay "+money0(payRestMonth):"")+" = "+money0(monthHave)+" vs "+money0(monthNeed)+" still needed (bills + unfunded expense targets)"
+   ])
+ ]));
+ // CARD line
+ if(cardDue>0){
+   box.appendChild(h("div",{style:"border:1px dashed "+C.red+";border-radius:10px;padding:10px 13px;"},[
+     h("div",{style:"font-size:12px;font-weight:700;color:"+C.red+";"},["\ud83d\udCb3 On credit card \u2014 pay "+money0(cardDue)+" on the 4th"]),
+     h("div",{style:"font-size:11px;color:"+C.faint+";margin-top:3px;"},["Not counted against your cash above \u2014 but don't forget it lands on the 4th."])
+   ]));
+ }
+ wrap.appendChild(box);
+}
 function isoToDate(s){if(!s)return null;var p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2]||1);}
 function weekStartOf(d){var x=new Date(d);var day=(x.getDay()+6)%7;x.setHours(0,0,0,0);x.setDate(x.getDate()-day);return x;}
 function renderDash(wrap){
  monthPicker(wrap);
+ renderCoverage(wrap);
  var k=state.viewKey;var m=months[k]||{in:{},out:{},payments:{},charges:{}};
  // gather all spends (out entries) for expenses+bills this month
  var cats=expTpl.concat(billTpl);
