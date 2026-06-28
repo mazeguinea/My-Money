@@ -115,6 +115,7 @@ function weeklyEq(amt,freq){amt=amt||0;return freq==="Weekly"?amt:freq==="Fortni
 
 
 function parseISO(s){if(!s)return null;var p=String(s).split("-");if(p.length<3)return null;return new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));}
+function billDaysUntil(b){var now=new Date();now.setHours(0,0,0,0);for(var off=0;off<400;off++){var d=new Date(now);d.setDate(d.getDate()+off);if(!billOccursInMonth(b,d.getFullYear(),d.getMonth()))continue;if(d.getDate()===b.due)return off;if(b.freq==="Fortnightly"&&d.getDate()===(b.due2||30))return off;if(b.freq==="Weekly")return off;}return null;}
 function dateDaysUntil(s){var d=parseISO(s);if(!d)return null;d.setHours(0,0,0,0);return Math.round((d-new Date().setHours(0,0,0,0))/86400000);}
 
 function nextDue(day){if(!day||day<1)return null;var now=new Date();now.setHours(0,0,0,0);for(var a=0;a<70;a++){var d=new Date(now);d.setDate(d.getDate()+a);if(d.getDate()===day)return d;}return null;}
@@ -186,16 +187,30 @@ function mcol(m){if(m==="cash")return{bg:C.cashBg,fg:C.cash};if(m==="card")retur
 
 
 
+function billAnchorMonth(b){
+ if(b.anchorMonth==null){
+   // anchor to the month of the next time this due-day occurs from today
+   var now=new Date();now.setHours(0,0,0,0);
+   for(var off=0;off<366;off++){var d=new Date(now);d.setDate(d.getDate()+off);if(d.getDate()===b.due){b.anchorMonth=d.getMonth();break;}}
+   if(b.anchorMonth==null)b.anchorMonth=now.getMonth();
+ }
+ return b.anchorMonth;
+}
+function billOccursInMonth(b,year,month){
+ var f=b.freq||"Monthly";
+ if(f==="Monthly"||f==="Fortnightly"||f==="Weekly")return true; // monthly-ish: every month
+ if(f==="Quarterly"){var am=billAnchorMonth(b);return ((month-am)%3+3)%3===0;}
+ if(f==="Annually"){return month===billAnchorMonth(b);}
+ return true;
+}
 function billDueInWeek(b,year,wi){
  var start=weekDate(year,wi); var end=new Date(start); end.setDate(end.getDate()+6);
- // check each day in the week for matching due day(s)
+ if(b.freq==="Weekly")return true; // due every week
  for(var d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
+   // must be the right MONTH for this bill's cycle
+   if(!billOccursInMonth(b,d.getFullYear(),d.getMonth())) continue;
    if(d.getDate()===b.due) return true;
-   if(b.freq==="Fortnightly" && b.due2 && d.getDate()===b.due2) return true;
- }
- // for fortnightly default second date 30 if not set
- if(b.freq==="Fortnightly" && !b.due2){
-   for(var d2=new Date(start); d2<=end; d2.setDate(d2.getDate()+1)){ if(d2.getDate()===30) return true; }
+   if(b.freq==="Fortnightly" && (d.getDate()===(b.due2||30))) return true;
  }
  return false;
 }
@@ -210,7 +225,6 @@ function gridRows(){
  var rows=[];
  gridIncome().forEach(function(c){rows.push({id:c.id,name:c.name,group:"income"});});
  bills.forEach(function(b){rows.push({id:billCatId(b),name:b.name,group:"bill"});});
- gridFree().forEach(function(c){rows.push({id:c.id,name:c.name,group:"free"});});
  loans.forEach(function(l){rows.push({id:loanCatId(l),name:l.name,group:"loan"});});
  return rows;
 }
@@ -367,11 +381,14 @@ function occurrencesInRange(day,day2,d0,d1){
  return n;
 }
 function dueInDayRange(d0,d1){
- var s=0;
+ var s=0;var now=new Date();now.setHours(0,0,0,0);
  bills.forEach(function(b){
-   var occ=occurrencesInRange(b.due, (b.freq==="Fortnightly"?(b.due2||30):null), d0, d1);
-   // a ghost is shown per due occurrence; count the bill amount per occurrence within window
-   s+=occ*b.amount;
+   for(var off=d0;off<=d1;off++){var d=new Date(now);d.setDate(d.getDate()+off);
+     if(!billOccursInMonth(b,d.getFullYear(),d.getMonth()))continue;
+     if(b.freq==="Weekly"){ if(((d-now)/86400000)%7===0||off===d0) {/*weekly: count once per 7d handled below*/} }
+     if(d.getDate()===b.due)s+=b.amount;
+     else if(b.freq==="Fortnightly"&&d.getDate()===(b.due2||30))s+=b.amount;
+   }
  });
  loans.forEach(function(l){(l.plans||[]).forEach(function(pp){var du=dateDaysUntil(pp.date);if(du!=null&&du>=d0&&du<=d1)s+=pp.amt;});});
  return s;
@@ -411,7 +428,7 @@ function renderDash(wrap){
  ]),0));
  renderHealthBanner(wrap);
  var items=[];
- bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null)items.push({name:b.name,amt:b.amount,du:du});});
+ bills.forEach(function(b){var du=billDaysUntil(b);if(du!=null)items.push({name:b.name,amt:b.amount,du:du});});
  // loans contribute PLANNED PAYMENTS (not balances)
  loans.forEach(function(l){(l.plans||[]).forEach(function(pp){var du=dateDaysUntil(pp.date);if(du!=null&&du>=0)items.push({name:l.name+" payment",amt:pp.amt,du:du});});});
  function within(n){var s=0;items.forEach(function(it){if(it.du>=0&&it.du<=n)s+=it.amt;});return s;}
@@ -630,7 +647,6 @@ function renderGrid(wrap){
  var allRows=gridRows();
  sectionRows("income","Income",C.green,allRows.filter(function(r){return r.group==="income";}));
  sectionRows("bill","Bills",C.red,allRows.filter(function(r){return r.group==="bill";}));
- sectionRows("free","Other spending",C.amber,allRows.filter(function(r){return r.group==="free";}));
  sectionRows("loan","Loans & cards",C.pot,allRows.filter(function(r){return r.group==="loan";}));
  function totRow(label,fn,color,bold){var tr=h("tr",{});
    tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.paper+";padding:6px 10px;font-weight:"+(bold?"700":"600")+";font-size:10.5px;color:"+color+";border-top:2px solid "+C.rule+";border-right:1px solid "+C.rule+";z-index:3;width:120px;min-width:120px;max-width:120px;"},[label]));
@@ -680,6 +696,23 @@ function addCat(){var name=prompt("Category name:","");if(!name)return;var inc=c
 function renameCat(c){var n=prompt("Rename (blank=delete):",c.name);if(n===null)return;if(n.trim()===""){if(confirm("Delete "+c.name+"?")){cats=cats.filter(function(x){return x.id!==c.id;});saveCats();render();}return;}c.name=n.trim();saveCats();render();}
 function editSettings(){var o=prompt("Opening cash ($):",String(settings.opening||0));if(o!==null)settings.opening=parseFloat(o)||0;var cc=prompt("Starting credit card ($):",String(settings.ccStart||0));if(cc!==null)settings.ccStart=parseFloat(cc)||0;var ap=prompt("Starting Afterpay ($):",String(settings.apStart||0));if(ap!==null)settings.apStart=parseFloat(ap)||0;saveSettings();render();}
 
+
+
+function billWeeklyAmt(b){return weeklyEq(b.amount,b.freq);}
+function ensureBillPot(b){
+ if(b.potId){var ex=pots.filter(function(p){return p.id===b.potId;})[0];if(ex)return ex;}
+ // create a pot for this bill
+ var p={id:uid(),name:b.name,reserved:0,forBill:b.id};
+ pots.push(p);b.potId=p.id;savePots();saveBills();return p;
+}
+function reserveWeekForBill(b){
+ var p=ensureBillPot(b);
+ var amt=billWeeklyAmt(b);
+ if(amt<=0)return;
+ if(freeCash()<amt){ if(!confirm("Free cash is "+money(freeCash())+", less than "+money(amt)+". Reserve anyway?"))return; }
+ p.reserved=(p.reserved||0)+amt;savePots();render();
+}
+
 /* ============ BILLS (table) ============ */
 function renderBills(wrap){
  var totalM=bills.reduce(function(s,b){return s+monthlyEq(b.amount,b.freq);},0);
@@ -687,7 +720,7 @@ function renderBills(wrap){
  wrap.appendChild(sortBar([{label:"Name",fn:function(){sortBills("name");}},{label:"Amount",fn:function(){sortBills("amount");}},{label:"Due date",fn:function(){sortBills("due");}}]));
  var box=h("div",{class:"gridwrap",style:"border:1px solid "+C.rule+";border-radius:10px;background:"+C.card+";"});
  var tbl=h("table",{style:"width:100%;font-size:12.5px;"});
- var hdr=h("tr",{});["Bill","Amount","Term","Due","Note",""].forEach(function(hh){hdr.appendChild(h("th",{style:"position:sticky;top:0;z-index:10;background:"+C.ink+";color:#fff;padding:7px 8px;text-align:left;font-size:11px;"},[hh]));});
+ var hdr=h("tr",{});["Bill","Amount","Term","Due","Set aside/wk","Reserve",""].forEach(function(hh){hdr.appendChild(h("th",{style:"position:sticky;top:0;z-index:10;background:"+C.ink+";color:#fff;padding:7px 8px;text-align:left;font-size:11px;"},[hh]));});
  tbl.appendChild(hdr);
  bills.forEach(function(b){tbl.appendChild(billRow(b));});
  box.appendChild(tbl);wrap.appendChild(box);
@@ -706,10 +739,16 @@ function billRow(b){
  // term as select
  var tsel=h("select",{style:"border:1px solid transparent;background:transparent;padding:6px;font-size:12px;"});
  ["Weekly","Fortnightly","Monthly","Quarterly","Annually"].forEach(function(f){var o=h("option",{value:f},[f]);if(f===b.freq)o.setAttribute("selected","selected");tsel.appendChild(o);});
- tsel.addEventListener("change",function(e){b.freq=e.target.value;saveBills();render();});
+ tsel.addEventListener("change",function(e){b.freq=e.target.value;b.anchorMonth=null;saveBills();render();});
  var tdT=h("td",{style:"border-top:1px solid "+C.rule+";padding:0;"});tdT.appendChild(tsel);tr.appendChild(tdT);
  tr.appendChild(ed(String(b.due),null,function(v){b.due=parseInt(v)||1;},"44px"));
- tr.appendChild(ed(b.note||"",null,function(v){b.note=v;}));
+ // weekly set-aside (read-only display)
+ tr.appendChild(h("td",{style:"border-top:1px solid "+C.rule+";padding:6px 8px;font-weight:700;color:"+C.pot+";"},[money0(billWeeklyAmt(b))+"/wk"]));
+ // reserve this week's set-aside into the bill's pot
+ var resTd=h("td",{style:"border-top:1px solid "+C.rule+";padding:4px 6px;"},[
+   h("button",{style:"border:none;background:"+C.pot+";color:#fff;border-radius:6px;padding:6px 9px;font-size:11px;font-weight:700;white-space:nowrap;",
+     onclick:function(){reserveWeekForBill(b);}},["+ Reserve"])]);
+ tr.appendChild(resTd);
  var del=h("td",{style:"border-top:1px solid "+C.rule+";padding:0 6px;text-align:center;"},[h("button",{style:"border:none;background:none;color:"+C.red+";font-size:14px;",onclick:function(){if(confirm("Remove "+b.name+"?")){bills=bills.filter(function(x){return x.id!==b.id;});saveBills();render();}}},["×"])]);
  tr.appendChild(del);return tr;
 }
