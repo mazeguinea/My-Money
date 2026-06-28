@@ -178,6 +178,23 @@ function h(tag,attrs,kids){var e=document.createElement(tag);
 function mcol(m){if(m==="cash")return{bg:C.cashBg,fg:C.cash};if(m==="card")return{bg:C.cardBg,fg:C.card_};if(m==="after")return{bg:C.afterBg,fg:C.after};if(m==="pot")return{bg:C.potBg,fg:C.pot};return{bg:"#fff",fg:C.ink};}
 
 
+
+
+function billDueInWeek(b,year,wi){
+ var start=weekDate(year,wi); var end=new Date(start); end.setDate(end.getDate()+6);
+ // check each day in the week for matching due day(s)
+ for(var d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
+   if(d.getDate()===b.due) return true;
+   if(b.freq==="Fortnightly" && b.due2 && d.getDate()===b.due2) return true;
+ }
+ // for fortnightly default second date 30 if not set
+ if(b.freq==="Fortnightly" && !b.due2){
+   for(var d2=new Date(start); d2<=end; d2.setDate(d2.getDate()+1)){ if(d2.getDate()===30) return true; }
+ }
+ return false;
+}
+function billForRowId(rid){ if(rid.indexOf("bill_")!==0)return null; var id=rid.slice(5); return bills.filter(function(b){return b.id===id;})[0]||null; }
+
 function gridIncome(){return cats.filter(function(c){return c.kind==="income";});}
 function gridFree(){return cats.filter(function(c){return c.kind==="expense";});}
 function billCatId(b){return "bill_"+b.id;}
@@ -322,10 +339,29 @@ function incomeInDayRange(d0,d1){
  return s;
 }
 // due (bills+loans) within [d0,d1] days
+function occurrencesInRange(day,day2,d0,d1){
+ // count how many times a given day-of-month (and optional second day) falls within [today+d0, today+d1]
+ var now=new Date();now.setHours(0,0,0,0);var n=0;
+ for(var off=d0;off<=d1;off++){var d=new Date(now);d.setDate(d.getDate()+off);
+   if(d.getDate()===day)n++;
+   if(day2&&d.getDate()===day2)n++;
+ }
+ return n;
+}
 function dueInDayRange(d0,d1){
  var s=0;
- bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null&&du>=d0&&du<=d1)s+=b.amount;});
- loans.forEach(function(l){var du=daysUntil(l.due);if(du!=null&&du>=d0&&du<=d1)s+=Math.max(0,loanCurrentBalance(l));});
+ bills.forEach(function(b){
+   var occ=occurrencesInRange(b.due, (b.freq==="Fortnightly"?(b.due2||30):null), d0, d1);
+   // a ghost is shown per due occurrence; count the bill amount per occurrence within window
+   s+=occ*b.amount;
+ });
+ loans.forEach(function(l){
+   // loans: count one payment occurrence per due day in window (use the balance as the obligation cap is wrong;
+   // instead count the loan's amount field as the scheduled payment if present, else skip)
+   var pay=l.amount||0;
+   if(pay>0){var occ=occurrencesInRange(l.due,null,d0,d1); s+=occ*pay;}
+   else { var du=daysUntil(l.due); if(du!=null&&du>=d0&&du<=d1) s+=Math.max(0,loanCurrentBalance(l)); }
+ });
  return s;
 }
 function healthFor(d0,d1,useCashNow){
@@ -546,16 +582,24 @@ function renderGrid(wrap){
        h("span",{},[rowinfo.name])]));
      for(var wi=0;wi<NW;wi++){(function(wi){
        var e=getCell(rid,wi);var col=e?mcol(e.method):{bg:"#fff",fg:C.ink};
-       var td=h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;background:"+col.bg+";"});
-       var inp=h("input",{class:"cellinp",inputmode:"decimal",value:e?money0(e.amt):"",style:"color:"+col.fg+";"});
+       // ghost due hint for bill rows with no real entry
+       var ghost=null;
+       if(!e && rowinfo.group==="bill"){var bb=billForRowId(rid); if(bb && billDueInWeek(bb,curYear(),wi)) ghost=bb.amount;}
+       var td=h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;background:"+(e?col.bg:(ghost!=null?"#FBFAF6":"#fff"))+";"});
+       var inp=h("input",{class:"cellinp",inputmode:"decimal",value:e?money0(e.amt):(ghost!=null?money0(ghost):""),style:"color:"+(e?col.fg:(ghost!=null?"#B9B2A4":C.ink))+";"+(ghost!=null&&!e?"font-style:italic;":"")});
+       if(ghost!=null&&!e)inp.setAttribute("title","Due this week — tap to confirm payment");
+       inp.addEventListener("focus",function(ev){ if(ghost!=null&&!getCell(rid,wi)){ ev.target.select(); } });
        inp.addEventListener("change",function(ev){
          var v=parseFloat(String(ev.target.value).replace(/[^0-9.]/g,""));
          if(isNaN(v)||v<=0){setCell(rid,wi,null);render();return;}
          var prev=getCell(rid,wi);
          if(rincome){setCell(rid,wi,{amt:+v.toFixed(2),method:"cash"});render();return;}
+         var wasGhost=(!prev && ghost!=null);
          var meth=prev?prev.method:"cash"; var pid=prev?prev.potId:null;
          if(meth==="pot"&&pid){setCell(rid,wi,{amt:+v.toFixed(2),method:"pot",potId:pid});}
          else setCell(rid,wi,{amt:+v.toFixed(2),method:meth});
+         // if confirming a due bill, prompt method choice via colour menu at the cell
+         if(wasGhost){var rect=ev.target.getBoundingClientRect?ev.target.getBoundingClientRect():{left:120,top:120};showCellMenu(rect.left||120,rect.top||120,rid,wi,+v.toFixed(2));}
          render();
        });
        td.addEventListener("contextmenu",function(ev){ev.preventDefault();var cur=getCell(rid,wi);showCellMenu(ev.clientX,ev.clientY,rid,wi,cur?cur.amt:0);});
