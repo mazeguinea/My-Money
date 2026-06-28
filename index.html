@@ -307,11 +307,61 @@ function spendByCategoryForMonth(mk){
 }
 function incomeForMonth(mk){var s=0;Object.keys(cells).forEach(function(k){var p=k.split("|");var y=parseInt(p[0]);var catId=p[1];var wi=parseInt(p[2]);if(isNaN(y)||isNaN(wi))return;if(cellMonthKey(y,wi)!==mk)return;var cat=cats.filter(function(c){return c.id===catId;})[0];if(cat&&cat.kind==="income"&&cells[k])s+=cells[k].amt;});return s;}
 
+
+
+function daysToEndOfWeek(){var now=new Date();var dow=(now.getDay()+6)%7;return 6-dow;} // days until Sunday
+function daysToEndOfMonth(){var now=new Date();var end=new Date(now.getFullYear(),now.getMonth()+1,0);return Math.round((end-new Date().setHours(0,0,0,0))/86400000);}
+// income logged whose week-date falls within [d0,d1] days from today
+function incomeInDayRange(d0,d1){
+ var now=new Date();now.setHours(0,0,0,0);
+ var s=0;
+ allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){
+   var wd=weekDate(y,wi);var diff=Math.round((wd-now)/86400000);
+   if(diff>=d0&&diff<=d1){ s+=yWeekIncome(y,wi); }
+ }});
+ return s;
+}
+// due (bills+loans) within [d0,d1] days
+function dueInDayRange(d0,d1){
+ var s=0;
+ bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null&&du>=d0&&du<=d1)s+=b.amount;});
+ loans.forEach(function(l){var du=daysUntil(l.due);if(du!=null&&du>=d0&&du<=d1)s+=Math.max(0,loanCurrentBalance(l));});
+ return s;
+}
+function healthFor(d0,d1,useCashNow){
+ var cash=useCashNow?freeCash():0;
+ var income=incomeInDayRange(d0,d1);
+ var due=dueInDayRange(d0,d1);
+ var spare=cash+income-due;
+ var status= spare>=200?"healthy": spare>=0?"tight":"short";
+ return {spare:spare,income:income,due:due,cash:cash,status:status};
+}
+function renderHealthBanner(wrap){
+ var ew=daysToEndOfWeek();
+ var thisWeek=healthFor(0,ew,true);
+ var nextWeek=healthFor(ew+1,ew+7,false);
+ var month=healthFor(0,daysToEndOfMonth(),true);
+ function pill(title,h2){
+   var col=h2.status==="healthy"?C.green:h2.status==="tight"?C.amber:C.red;
+   var bg=h2.status==="healthy"?C.greenSoft:h2.status==="tight"?C.amberSoft:C.redSoft;
+   var msg=h2.status==="healthy"?"Healthy — room to spend":h2.status==="tight"?"Tight — hold your cash":"Short — don't spend";
+   return h("div",{style:"flex:1;min-width:150px;border:1.5px solid "+col+";background:"+bg+";border-radius:11px;padding:11px 13px;"},[
+     h("div",{style:"font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:"+C.faint+";font-weight:700;"},[title]),
+     h("div",{style:"font-size:14px;font-weight:800;color:"+col+";margin:2px 0 3px;"},[msg]),
+     h("div",{style:"font-size:11px;color:"+C.ink+";"},[(h2.spare>=0?"+":"")+money0(h2.spare)+" spare"])
+   ]);
+ }
+ wrap.appendChild(h("div",{style:"display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;"},[
+   pill("This week",thisWeek),pill("Next week",nextWeek),pill("This month",month)
+ ]));
+}
+
 function renderDash(wrap){
  wrap.appendChild(sticky(h("div",{style:"display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;"},[
    balCard("Free cash",freeCash(),C.ink),balCard("In pots",totalReserved(),C.pot),
    balCard("Credit card",ccBalance(),C.card_),balCard("Afterpay",apBalance(),C.after)
  ]),0));
+ renderHealthBanner(wrap);
  var items=[];
  bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null)items.push({name:b.name,amt:b.amount,du:du});});
  loans.forEach(function(l){var du=daysUntil(l.due);if(du!=null)items.push({name:l.name,amt:l.total,du:du});});
