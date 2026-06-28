@@ -176,11 +176,21 @@ function totalCash(){return freeCash()+totalReserved();}
 /* running cash balance per week within current year (free cash trajectory) */
 function runningCashWeek(wi){
  var bal=settings.opening||0;
- // include prior years fully
- allYears().forEach(function(y){if(y<curYear()){for(var w=0;w<weeksInYear(y);w++)bal+=yWeekIncome(y,w)-yWeekOut(y,w,"cash");}});
- for(var i=0;i<=wi;i++)bal+=weekIncome(i)-weekCashOut(i);
+ // include prior years fully (planned + confirmed cash out)
+ allYears().forEach(function(y){if(y<curYear()){for(var w=0;w<weeksInYear(y);w++)bal+=yWeekIncome(y,w)-yWeekOutPlannedFor(y,w);}});
+ for(var i=0;i<=wi;i++)bal+=weekIncome(i)-weekCashOutPlanned(i);
  bal-=totalReserved(); // reservations set aside
  return bal;
+}
+// planned cash out for any given year/week (confirmed cash + ghost amounts)
+function yWeekOutPlannedFor(y,wi){
+ var cash=yWeekOut(y,wi,"cash");
+ // ghosts for that specific year/week
+ var g=0;
+ var savedYear=settings.year; // ghostOutForWeek uses curYear; emulate for arbitrary year
+ bills.forEach(function(b){var rid="bill_"+b.id;if(cells[cellKey(y,rid,wi)])return;if(billDueInWeek(b,y,wi))g+=b.amount;});
+ loans.forEach(function(l){var rid="loan_"+l.id;if(cells[cellKey(y,rid,wi)])return;if(l.plans){var ws=weekDate(y,wi);var we=new Date(ws);we.setDate(we.getDate()+6);l.plans.forEach(function(pp){var pd=parseISO(pp.date);if(pd&&pd>=ws&&pd<=we)g+=pp.amt;});}});
+ return cash+g;
 }
 
 function loanCurrentBalance(l){var nm=(l.name||"").toLowerCase();
@@ -289,7 +299,7 @@ function reorderBtns(arr,idx,saveFn){
    h("button",{style:"border:1px solid "+C.rule+";background:#fff;border-radius:5px;width:22px;height:22px;font-size:12px;line-height:1;color:"+(idx===arr.length-1?C.rule:C.ink)+";",onclick:function(e){e.stopPropagation();arrMove(arr,idx,idx+1);saveFn();render();}},["▼"])]);
 }
 
-var state={tab:"grid",tagFor:null,dashMonth:null,chartSel:null,chartFrom:null,chartTo:null,chartOpen:false,loanOpen:null,dueWin:7};
+var state={tab:"grid",tagFor:null,dashMonth:null,chartSel:null,chartFrom:null,chartTo:null,chartOpen:false,loanOpen:null,dueWin:7,sel:{}};
 function closeCellMenu(){var m=document.getElementById("cellmenu");if(m)m.parentNode.removeChild(m);}
 
 
@@ -339,7 +349,7 @@ function render(){
  [["dash","Dashboard"],["grid","Weekly"],["bills","Bills"],["loans","Loans"],["pots","Pots"]].forEach(function(t){
    var on=state.tab===t[0];
    tabs.appendChild(h("button",{style:"flex:1;min-width:72px;border:none;background:"+(on?C.card:"transparent")+";padding:9px 0;border-radius:7px;font-size:12.5px;font-weight:600;color:"+(on?C.ink:C.faint)+";"+(on?"box-shadow:0 1px 2px rgba(0,0,0,.06);":""),
-     onclick:function(){state.tab=t[0];render();}},[t[1]]));
+     onclick:function(){state.tab=t[0];if(t[0]!=="grid"){state.sel={};var sb=document.getElementById("selbar");if(sb)sb.parentNode.removeChild(sb);}render();}},[t[1]]));
  });
  wrap.appendChild(tabs);
  if(state.tab==="dash")renderDash(wrap);
@@ -688,6 +698,16 @@ function renderGrid(wrap){
          render();
        });
        td.addEventListener("contextmenu",function(ev){ev.preventDefault();var cur=getCell(rid,wi);showCellMenu(ev.clientX,ev.clientY,rid,wi,cur?cur.amt:0);});
+       // Ctrl/Cmd-click to select for sum/count/avg (Excel-style)
+       (function(rid2,wi2,inp2){
+         function maybeSelect(ev){ if(ev.ctrlKey||ev.metaKey){ ev.preventDefault(); ev.stopPropagation();
+           var key=rid2+"|"+wi2; if(state.sel[key])delete state.sel[key]; else state.sel[key]=true; updateSelBar(); refreshCellSelStyles(); inp2.blur&&inp2.blur(); }
+         }
+         td.addEventListener("mousedown",maybeSelect);
+         inp2.addEventListener("mousedown",maybeSelect);
+       })(rid,wi,inp);
+       td._selkey=rid+"|"+wi;
+       if(state.sel[rid+"|"+wi]){td.setAttribute("style",td.getAttribute("style")+";outline:2px solid "+C.ink+";outline-offset:-2px;");}
        td.appendChild(inp);tr.appendChild(td);
      })(wi);}
      tbl.appendChild(tr);
@@ -711,7 +731,40 @@ function renderGrid(wrap){
  wrap.appendChild(box);
  wrap.appendChild(h("button",{style:"border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:10px;padding:11px 14px;font-size:13px;font-weight:600;margin-top:12px;",
    onclick:function(){addCat();}},["+ Add category"]));
+ setTimeout(updateSelBar,0);
 }
+
+
+function selValue(key){var p=key.split("|");var rid=p[0];var wi=parseInt(p[1]);
+ // value is the cell amount if present, else the ghost amount for bills/loans
+ var e=cells[cellKey(curYear(),rid,wi)];if(e)return e.amt;
+ if(rid.indexOf("bill_")===0){var b=billForRowId(rid);if(b&&billDueInWeek(b,curYear(),wi))return b.amount;}
+ if(rid.indexOf("loan_")===0){var l=loanForRowId(rid);if(l&&l.plans){var ws=weekDate(curYear(),wi);var we=new Date(ws);we.setDate(we.getDate()+6);var g=0;l.plans.forEach(function(pp){var pd=parseISO(pp.date);if(pd&&pd>=ws&&pd<=we)g+=pp.amt;});if(g)return g;}}
+ return 0;
+}
+function updateSelBar(){
+ var keys=Object.keys(state.sel);
+ var bar=document.getElementById("selbar");
+ if(keys.length===0){if(bar)bar.parentNode.removeChild(bar);return;}
+ var sum=0;keys.forEach(function(k){sum+=selValue(k);});
+ var count=keys.length;var avg=count?sum/count:0;
+ if(!bar){bar=document.createElement("div");bar.id="selbar";
+   bar.setAttribute("style","position:fixed;left:0;right:0;bottom:0;z-index:9999;background:"+C.ink+";color:#fff;display:flex;justify-content:center;gap:28px;align-items:center;padding:11px 16px;font-size:13.5px;font-weight:700;box-shadow:0 -3px 14px rgba(0,0,0,.2);");
+   document.body.appendChild(bar);}
+ bar.innerHTML="";
+ function seg(label,val){var d=document.createElement("span");d.innerHTML='<span style="color:#C9C0B0;font-weight:600;font-size:11px;letter-spacing:.05em;">'+label+'</span> '+val;return d;}
+ bar.appendChild(seg("SUM", "$"+sum.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})));
+ bar.appendChild(seg("COUNT", String(count)));
+ bar.appendChild(seg("AVG", "$"+avg.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})));
+ var clr=document.createElement("button");clr.textContent="clear";clr.setAttribute("style","border:1px solid #C9C0B0;background:none;color:#C9C0B0;border-radius:6px;padding:4px 11px;font-size:11px;font-weight:700;cursor:pointer;");
+ clr.addEventListener("click",function(){state.sel={};updateSelBar();refreshCellSelStyles();});
+ bar.appendChild(clr);
+}
+function refreshCellSelStyles(){
+ // re-render grid to redraw outlines (simple + reliable)
+ if(state.tab==="grid")render();
+}
+
 function legendDot(color,label){return h("span",{style:"display:flex;align-items:center;gap:5px;"},[h("span",{style:"width:12px;height:12px;border-radius:3px;background:"+color+";display:inline-block;"},[]),h("span",{style:"font-weight:600;"},[label])]);}
 
 function renderTagPicker(){
