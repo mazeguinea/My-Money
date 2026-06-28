@@ -112,6 +112,11 @@ function weeksInYear(y){return settings.weeks[y]||26;}
 
 function monthlyEq(amt,freq){amt=amt||0;return freq==="Weekly"?amt*52/12:freq==="Fortnightly"?amt*26/12:freq==="Monthly"?amt:freq==="Quarterly"?amt/3:freq==="Annually"?amt/12:amt;}
 function weeklyEq(amt,freq){amt=amt||0;return freq==="Weekly"?amt:freq==="Fortnightly"?amt/2:freq==="Monthly"?amt*12/52:freq==="Quarterly"?amt*4/52:freq==="Annually"?amt/52:amt;}
+
+
+function parseISO(s){if(!s)return null;var p=String(s).split("-");if(p.length<3)return null;return new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));}
+function dateDaysUntil(s){var d=parseISO(s);if(!d)return null;d.setHours(0,0,0,0);return Math.round((d-new Date().setHours(0,0,0,0))/86400000);}
+
 function nextDue(day){if(!day||day<1)return null;var now=new Date();now.setHours(0,0,0,0);for(var a=0;a<70;a++){var d=new Date(now);d.setDate(d.getDate()+a);if(d.getDate()===day)return d;}return null;}
 function daysUntil(day){var d=nextDue(day);if(!d)return null;return Math.round((d-new Date().setHours(0,0,0,0))/86400000);}
 
@@ -193,6 +198,7 @@ function billDueInWeek(b,year,wi){
  }
  return false;
 }
+function loanForRowId(rid){ if(rid.indexOf("loan_")!==0)return null; var id=rid.slice(5); return loans.filter(function(l){return l.id===id;})[0]||null; }
 function billForRowId(rid){ if(rid.indexOf("bill_")!==0)return null; var id=rid.slice(5); return bills.filter(function(b){return b.id===id;})[0]||null; }
 
 function gridIncome(){return cats.filter(function(c){return c.kind==="income";});}
@@ -249,6 +255,17 @@ function reorderBtns(arr,idx,saveFn){
 
 var state={tab:"grid",tagFor:null,dashMonth:null,chartSel:null,chartFrom:null,chartTo:null,chartOpen:false,loanOpen:null,dueWin:7};
 function closeCellMenu(){var m=document.getElementById("cellmenu");if(m)m.parentNode.removeChild(m);}
+
+
+function showBarLabel(name,mk,val){
+ var ex=document.getElementById("barlabel");if(ex)ex.parentNode.removeChild(ex);
+ var d=document.createElement("div");d.id="barlabel";
+ d.setAttribute("style","position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:9999;background:"+C.ink+";color:#fff;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.2);");
+ d.textContent=name+" · "+monthLabel(mk)+": "+money(val);
+ document.body.appendChild(d);
+ setTimeout(function(){if(d.parentNode)d.parentNode.removeChild(d);},2200);
+}
+
 function showCellMenu(x,y,catId,wi,amt){
  closeCellMenu();
  if(!amt||amt<=0){ // if no amount yet, prompt for one
@@ -355,13 +372,7 @@ function dueInDayRange(d0,d1){
    // a ghost is shown per due occurrence; count the bill amount per occurrence within window
    s+=occ*b.amount;
  });
- loans.forEach(function(l){
-   // loans: count one payment occurrence per due day in window (use the balance as the obligation cap is wrong;
-   // instead count the loan's amount field as the scheduled payment if present, else skip)
-   var pay=l.amount||0;
-   if(pay>0){var occ=occurrencesInRange(l.due,null,d0,d1); s+=occ*pay;}
-   else { var du=daysUntil(l.due); if(du!=null&&du>=d0&&du<=d1) s+=Math.max(0,loanCurrentBalance(l)); }
- });
+ loans.forEach(function(l){(l.plans||[]).forEach(function(pp){var du=dateDaysUntil(pp.date);if(du!=null&&du>=d0&&du<=d1)s+=pp.amt;});});
  return s;
 }
 function healthFor(d0,d1,useCashNow){
@@ -400,7 +411,8 @@ function renderDash(wrap){
  renderHealthBanner(wrap);
  var items=[];
  bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null)items.push({name:b.name,amt:b.amount,du:du});});
- loans.forEach(function(l){var du=daysUntil(l.due);if(du!=null)items.push({name:l.name,amt:l.total,du:du});});
+ // loans contribute PLANNED PAYMENTS (not balances)
+ loans.forEach(function(l){(l.plans||[]).forEach(function(pp){var du=dateDaysUntil(pp.date);if(du!=null&&du>=0)items.push({name:l.name+" payment",amt:pp.amt,du:du});});});
  function within(n){var s=0;items.forEach(function(it){if(it.du>=0&&it.du<=n)s+=it.amt;});return s;}
  var windows=[{d:7,label:"7 days"},{d:14,label:"14 days"},{d:21,label:"21 days"},{d:30,label:"30 days"},{d:60,label:"2 months"},{d:90,label:"3 months"}];
  if(!state.dueWin)state.dueWin=7;
@@ -521,7 +533,12 @@ function renderDash(wrap){
        var v=seriesValue(s,mk);var bh=plotH*(v/maxV);
        var bx=x0+bw*si2; var by=padT+plotH-bh;
        var idxInAll=series.findIndex(function(z){return z.id===s.id;});
-       svg.appendChild(svgEl("rect",{x:bx+1,y:by,width:Math.max(1,bw-2),height:bh,fill:colorFor(idxInAll),rx:1}));
+       var rect=svgEl("rect",{x:bx+1,y:by,width:Math.max(1,bw-2),height:bh,fill:colorFor(idxInAll),rx:1});
+       var title=document.createElementNS(ns,"title");title.textContent=s.name+" — "+monthLabel(mk)+": "+money(v);
+       rect.appendChild(title);
+       // also a tap/click handler that shows a small floating label
+       (function(sn,mkn,vv,cx,cy){rect.addEventListener("click",function(){showBarLabel(sn,mkn,vv);});})(s.name,mk,v);
+       svg.appendChild(rect);
      });
      var mlab=svgEl("text",{x:gx+groupW/2,y:H-padB+16,"text-anchor":"middle","font-size":9.5,fill:C.ink});
      var p=mk.split("-");mlab.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,1).toLocaleDateString(undefined,{month:"short",year:"2-digit"});
@@ -582,9 +599,10 @@ function renderGrid(wrap){
        h("span",{},[rowinfo.name])]));
      for(var wi=0;wi<NW;wi++){(function(wi){
        var e=getCell(rid,wi);var col=e?mcol(e.method):{bg:"#fff",fg:C.ink};
-       // ghost due hint for bill rows with no real entry
+       // ghost due hint for bill rows AND planned loan payments
        var ghost=null;
        if(!e && rowinfo.group==="bill"){var bb=billForRowId(rid); if(bb && billDueInWeek(bb,curYear(),wi)) ghost=bb.amount;}
+       if(!e && rowinfo.group==="loan"){var ll=loanForRowId(rid); if(ll&&ll.plans){var ws=weekDate(curYear(),wi);var we=new Date(ws);we.setDate(we.getDate()+6);ll.plans.forEach(function(pp){var pd=parseISO(pp.date);if(pd&&pd>=ws&&pd<=we)ghost=(ghost||0)+pp.amt;});}}
        var td=h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;background:"+(e?col.bg:(ghost!=null?"#FBFAF6":"#fff"))+";"});
        var inp=h("input",{class:"cellinp",inputmode:"decimal",value:e?money0(e.amt):(ghost!=null?money0(ghost):""),style:"color:"+(e?col.fg:(ghost!=null?"#B9B2A4":C.ink))+";"+(ghost!=null&&!e?"font-style:italic;":"")});
        if(ghost!=null&&!e)inp.setAttribute("title","Due this week — tap to confirm payment");
@@ -750,6 +768,24 @@ function renderLoans(wrap){
      } else {
        sched.appendChild(h("div",{style:"font-size:12px;color:"+C.faint+";margin-top:9px;"},["No payments logged yet. Log them on the Weekly tab under '"+l.name+"'."]));
      }
+     // planned payments (ghosts in weekly tracker)
+     var planBox=h("div",{style:"margin-top:13px;border-top:1px solid "+C.rule+";padding-top:10px;"});
+     planBox.appendChild(h("div",{style:"font-size:10.5px;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:7px;"},["Planned payments (show as ghosts in Weekly)"]));
+     (l.plans||[]).forEach(function(pp){
+       planBox.appendChild(h("div",{style:"display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:4px 0;border-top:1px solid "+C.rule+";"},[
+         h("span",{},[ (parseISO(pp.date)?parseISO(pp.date).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"2-digit"}):pp.date) ]),
+         h("span",{style:"font-weight:700;"},[money(pp.amt)]),
+         h("button",{style:"border:none;background:none;color:"+C.red+";font-size:13px;",onclick:function(){l.plans=(l.plans||[]).filter(function(x){return x.id!==pp.id;});saveLoans();render();}},["×"])
+       ]));
+     });
+     var pdate=h("input",{type:"date",style:"flex:1;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:7px;padding:7px 9px;font-size:12.5px;color:"+C.ink+";"});
+     var pamt=h("input",{inputmode:"decimal",placeholder:"amount",style:"width:90px;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:7px;padding:7px 9px;font-size:12.5px;color:"+C.ink+";"});
+     planBox.appendChild(h("div",{style:"display:flex;gap:6px;margin-top:8px;align-items:center;"},[
+       pdate,pamt,
+       h("button",{style:"border:none;background:"+C.pot+";color:#fff;border-radius:7px;padding:7px 12px;font-size:12.5px;font-weight:700;",
+         onclick:function(){var v=parseFloat(pamt.value);var dv=pdate.value;if(!v||v<=0||!dv){alert("Pick a date and amount.");return;}if(!l.plans)l.plans=[];l.plans.push({id:uid(),date:dv,amt:+v.toFixed(2)});saveLoans();render();}},["+ Plan"])
+     ]));
+     sched.appendChild(planBox);
      // edit/remove
      sched.appendChild(h("div",{style:"display:flex;gap:12px;margin-top:11px;"},[
        h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",onclick:function(){editLoanInline(l);}},["edit details"]),
