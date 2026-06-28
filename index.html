@@ -314,6 +314,24 @@ function showBarLabel(name,mk,val){
 
 function showCellMenu(x,y,catId,wi,amt){
  closeCellMenu();
+ var existing=getCell(catId,wi);
+ // build menu with skip/restore for bill+loan rows
+ var isBillOrLoan=(catId.indexOf("bill_")===0||catId.indexOf("loan_")===0);
+ if(isBillOrLoan){
+   var menu0=document.createElement("div");menu0.id="cellmenu";
+   menu0.setAttribute("style","position:fixed;z-index:9999;left:"+Math.min(x,window.innerWidth-180)+"px;top:"+Math.min(y,window.innerHeight-160)+"px;background:#fff;border:1.5px solid "+C.ink+";border-radius:10px;padding:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);min-width:170px;");
+   function opt0(label,color,fn){var b=document.createElement("button");b.setAttribute("style","display:block;width:100%;text-align:left;border:none;background:none;color:"+color+";border-radius:7px;padding:9px 11px;font-size:13px;font-weight:700;cursor:pointer;");b.textContent=label;b.addEventListener("click",function(){fn();closeCellMenu();render();});menu0.appendChild(b);}
+   if(existing&&existing.skip){
+     opt0("↩ Restore (show due amount)",C.ink,function(){setCell(catId,wi,null);});
+   } else {
+     opt0("⊘ Skip this week ($0)",C.red,function(){setCell(catId,wi,{skip:true,amt:0});});
+   }
+   opt0("✎ Enter a payment…",C.ink,function(){var raw=prompt("Amount paid:","");var v=parseFloat(raw);if(isNaN(v)||v<=0)return;showCellMenu(x,y,catId,wi,+v.toFixed(2));});
+   var c0=document.createElement("button");c0.setAttribute("style","display:block;width:100%;border:none;background:none;color:"+C.faint+";font-size:12px;text-decoration:underline;padding:4px;cursor:pointer;");c0.textContent="cancel";c0.addEventListener("click",closeCellMenu);menu0.appendChild(c0);
+   document.body.appendChild(menu0);
+   setTimeout(function(){document.addEventListener("click",function hh(){closeCellMenu();document.removeEventListener("click",hh);});},50);
+   return;
+ }
  if(!amt||amt<=0){ // if no amount yet, prompt for one
    var raw=prompt("Amount for this cell:","");var v=parseFloat(raw);if(isNaN(v)||v<=0)return;amt=+v.toFixed(2);
  }
@@ -675,14 +693,20 @@ function renderGrid(wrap){
      tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.card+";padding:5px 10px;font-weight:600;border-top:1px solid "+C.rule+";border-right:1px solid "+C.rule+";z-index:3;font-size:11.5px;width:140px;min-width:140px;max-width:140px;"},[
        h("span",{},[rowinfo.name])]));
      for(var wi=0;wi<NW;wi++){(function(wi){
-       var e=getCell(rid,wi);var col=e?mcol(e.method):{bg:"#fff",fg:C.ink};
+       var e=getCell(rid,wi);
+       var isSkip=e&&e.skip;
+       var col=(e&&!isSkip)?mcol(e.method):{bg:"#fff",fg:C.ink};
        // ghost due hint for bill rows AND planned loan payments
        var ghost=null;
        if(!e && rowinfo.group==="bill"){var bb=billForRowId(rid); if(bb && billDueInWeek(bb,curYear(),wi)) ghost=bb.amount;}
        if(!e && rowinfo.group==="loan"){var ll=loanForRowId(rid); if(ll&&ll.plans){var ws=weekDate(curYear(),wi);var we=new Date(ws);we.setDate(we.getDate()+6);ll.plans.forEach(function(pp){var pd=parseISO(pp.date);if(pd&&pd>=ws&&pd<=we)ghost=(ghost||0)+pp.amt;});}}
-       var td=h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;background:"+(e?col.bg:(ghost!=null?"#FBFAF6":"#fff"))+";"});
-       var inp=h("input",{class:"cellinp",inputmode:"decimal",value:e?money0(e.amt):(ghost!=null?money0(ghost):""),style:"color:"+(e?col.fg:(ghost!=null?"#B9B2A4":C.ink))+";"+(ghost!=null&&!e?"font-style:italic;":"")});
-       if(ghost!=null&&!e)inp.setAttribute("title","Due this week — tap to confirm payment");
+       var bgc = isSkip?"#F1EEE7":(e?col.bg:(ghost!=null?"#FBFAF6":"#fff"));
+       var td=h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;background:"+bgc+";"});
+       var dispVal = isSkip?"—skip—":(e?money0(e.amt):(ghost!=null?money0(ghost):""));
+       var dispColor = isSkip?"#B9B2A4":(e?col.fg:(ghost!=null?"#B9B2A4":C.ink));
+       var inp=h("input",{class:"cellinp",inputmode:"decimal",value:dispVal,style:"color:"+dispColor+";"+((ghost!=null&&!e)||isSkip?"font-style:italic;":"")+(isSkip?"text-decoration:line-through;font-size:9px;":"")});
+       if(isSkip)inp.setAttribute("title","Skipped this week — right-click to restore");
+       else if(ghost!=null&&!e)inp.setAttribute("title","Due this week — type to confirm, or right-click to skip");
        inp.addEventListener("focus",function(ev){ if(ghost!=null&&!getCell(rid,wi)){ ev.target.select(); } });
        inp.addEventListener("change",function(ev){
          var v=parseFloat(String(ev.target.value).replace(/[^0-9.]/g,""));
@@ -719,7 +743,7 @@ function renderGrid(wrap){
  sectionRows("loan","Loans & cards",C.pot,allRows.filter(function(r){return r.group==="loan";}));
  function totRow(label,fn,color,bold){var tr=h("tr",{});
    tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.paper+";padding:6px 10px;font-weight:"+(bold?"700":"600")+";font-size:10.5px;color:"+color+";border-top:2px solid "+C.rule+";border-right:1px solid "+C.rule+";z-index:3;width:120px;min-width:120px;max-width:120px;"},[label]));
-   for(var wi=0;wi<NW;wi++){var v=fn(wi);tr.appendChild(h("td",{style:"text-align:center;padding:6px 3px;font-weight:700;font-size:10.5px;color:"+color+";border-top:2px solid "+C.rule+";"},[v?money0(v):"–"]));}
+   for(var wi=0;wi<NW;wi++){var v=fn(wi);var cellColor=(v<0?C.red:color);tr.appendChild(h("td",{style:"text-align:center;padding:6px 3px;font-weight:700;font-size:10.5px;color:"+cellColor+";border-top:2px solid "+C.rule+";"},[v?money0(v):"–"]));}
    tbl.appendChild(tr);}
  totRow("Income",weekIncome,C.green,true);
  totRow("Cash out (incl. planned)",weekCashOutPlanned,C.cash,false);
