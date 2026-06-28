@@ -566,19 +566,19 @@ function renderBills(wrap){
  var tbl=h("table",{style:"width:100%;font-size:12.5px;"});
  var hdr=h("tr",{});["Bill","Amount","Term","Due","Note",""].forEach(function(hh){hdr.appendChild(h("th",{style:"position:sticky;top:0;z-index:10;background:"+C.ink+";color:#fff;padding:7px 8px;text-align:left;font-size:11px;"},[hh]));});
  tbl.appendChild(hdr);
- bills.forEach(function(b,bi){tbl.appendChild(billRow(b,bi));});
+ bills.forEach(function(b){tbl.appendChild(billRow(b));});
  box.appendChild(tbl);wrap.appendChild(box);
  wrap.appendChild(h("button",{style:"width:100%;border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:10px;padding:12px;font-size:13px;font-weight:600;margin-top:10px;",
    onclick:function(){bills.push({id:uid(),name:"New bill",amount:0,freq:"Monthly",due:1,note:""});saveBills();render();}},["+ Add a bill"]));
 }
-function billRow(b,bi){
+function billRow(b){
  var tr=h("tr",{});
  function ed(val,fmt,setter,wid){var inp=h("input",{value:val,style:"width:"+(wid||"100%")+";border:1px solid transparent;background:transparent;padding:6px 6px;font-size:12.5px;color:"+C.ink+";border-radius:5px;"});
    inp.addEventListener("focus",function(){inp.style.border="1px solid "+C.rule;inp.style.background="#fff";});
    inp.addEventListener("change",function(e){setter(e.target.value);saveBills();render();});
    inp.addEventListener("blur",function(){inp.style.border="1px solid transparent";inp.style.background="transparent";});
    var td=h("td",{style:"border-top:1px solid "+C.rule+";padding:0;"});td.appendChild(inp);return td;}
- var nameTd=ed(b.name,null,function(v){b.name=v;});nameTd.appendChild(reorderBtns(bills,bi,saveBills));tr.appendChild(nameTd);
+ tr.appendChild(ed(b.name,null,function(v){b.name=v;}));
  tr.appendChild(ed(money0(b.amount),null,function(v){b.amount=parseFloat(String(v).replace(/[^0-9.]/g,""))||0;}));
  // term as select
  var tsel=h("select",{style:"border:1px solid transparent;background:transparent;padding:6px;font-size:12px;"});
@@ -600,7 +600,7 @@ function renderLoans(wrap){
    h("div",{style:"font-family:Georgia,serif;font-size:22px;font-weight:700;"},[money(totalOwed)]),
    h("div",{style:"font-size:11.5px;color:"+C.faint+";margin-top:3px;"},["Log payments (and card/afterpay spends) in the Weekly tab. Tap a loan to see its schedule."])]),0));
  wrap.appendChild(sortBar([{label:"Name",fn:function(){sortLoans("name");}},{label:"Balance",fn:function(){sortLoans("balance");}},{label:"Due date",fn:function(){sortLoans("due");}}]));
- loans.forEach(function(l,li){
+ loans.forEach(function(l){
    var nm=(l.name||"").toLowerCase();
    var isCard=nm.indexOf("credit")>=0||nm.indexOf("card")>=0;
    var isAfter=nm.indexOf("afterpay")>=0;
@@ -610,7 +610,7 @@ function renderLoans(wrap){
    var spends=isCard?methodSpendExcludingLoanRow("card",loanCatId(l)):isAfter?methodSpendExcludingLoanRow("after",loanCatId(l)):0;
    var open=!!state.loanOpen[l.id];
    var head=h("div",{style:"display:flex;justify-content:space-between;align-items:center;cursor:pointer;",onclick:function(){state.loanOpen[l.id]=!open;render();}},[
-     h("div",{style:"display:flex;align-items:center;"},[h("span",{style:"font-size:15px;font-weight:700;"},[l.name]),reorderBtns(loans,li,saveLoans),h("span",{style:"font-size:11px;color:"+C.faint+";margin-left:7px;"},[(isCard||isAfter)?"card/spend":l.freq+" · due "+l.due])]),
+     h("div",{},[h("span",{style:"font-size:15px;font-weight:700;"},[l.name]),h("span",{style:"font-size:11px;color:"+C.faint+";margin-left:7px;"},[(isCard||isAfter)?"card/spend":l.freq+" · due "+l.due])]),
      h("div",{style:"display:flex;align-items:center;gap:9px;"},[h("span",{style:"font-size:16px;font-weight:700;color:"+(bal<=0?C.green:C.ink)+";"},[bal<=0?"CLEARED ✓":money(bal)]),h("span",{style:"color:"+C.faint+";font-size:13px;"},[open?"▲":"▼"])])
    ]);
    var card=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:11px;padding:12px 14px;margin-bottom:9px;"},[head]);
@@ -680,11 +680,11 @@ function renderPots(wrap){
      h("div",{style:"text-align:right;"},[h("div",{style:"font-size:11px;color:"+C.faint+";font-weight:600;"},["Free cash left"]),h("div",{style:"font-size:15px;font-weight:700;margin-top:4px;color:"+(freeCash()<0?C.red:C.ink)+";"},[money(freeCash())])])])]),0));
  wrap.appendChild(h("div",{style:"font-size:12px;color:"+C.faint+";margin-bottom:10px;"},["Reserving moves money from free cash into a pot. Paying from a pot (in the weekly tracker) reduces it."]));
  wrap.appendChild(sortBar([{label:"Name",fn:function(){sortPots("name");}},{label:"Reserved",fn:function(){sortPots("reserved");}}]));
- pots.forEach(function(p,pi){
+ pots.forEach(function(p){
    var addInp=h("input",{inputmode:"decimal",placeholder:"reserve $",style:"flex:1;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:8px 10px 8px 20px;font-weight:700;font-size:13px;color:"+C.ink+";"});
    wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:11px;padding:12px 14px;margin-bottom:9px;"},[
      h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;"},[
-       h("div",{style:"display:flex;align-items:center;"},[h("span",{style:"font-size:15px;font-weight:700;"},[p.name]),reorderBtns(pots,pi,savePots)]),
+       h("span",{style:"font-size:15px;font-weight:700;"},[p.name]),
        h("span",{style:"font-size:16px;font-weight:700;color:"+C.pot+";"},[money(p.reserved||0)])]),
      h("div",{style:"display:flex;gap:7px;margin-top:9px;"},[
        h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:8px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:13px;"},["$"]),addInp]),
