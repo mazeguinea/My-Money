@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="theme-color" content="#1B1916"/>
-<title>Weekly Tracker</title>
+<title>My Money</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
   html,body{background:#F6F2E9;color:#1B1916;font-family:ui-sans-serif,-apple-system,'Segoe UI',Roboto,sans-serif;}
   input::placeholder{color:#8B847A;}
   button{font-family:inherit;cursor:pointer;}
   input,select{font-family:inherit;}
-  input:focus-visible,button:focus-visible{outline:2px solid #1B1916;outline-offset:2px;}
+  input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid #1B1916;outline-offset:2px;}
   .bar{transition:width .4s ease;}
   table{border-collapse:collapse;}
   .gridwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
@@ -23,7 +23,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============================================================
-   PASTE YOUR SUPABASE VALUES (same project as before).
+   PASTE YOUR SUPABASE VALUES.
    ============================================================ */
 var SUPABASE_URL = "https://sxfenjxzrhavutolxjmk.supabase.co";
 var SUPABASE_KEY = "sb_publishable_bjROj1N5hNGw0jcuK0vbQQ_LOQcSbH7";
@@ -33,10 +33,9 @@ if(SUPABASE_URL&&SUPABASE_KEY&&window.supabase){try{sb=window.supabase.createCli
 var CLOUD=!!sb;
 
 var C={paper:"#F6F2E9",ink:"#1B1916",faint:"#8B847A",rule:"#DCD4C6",card:"#FFFFFF",
-red:"#B23A2E",redSoft:"#FAECEA",green:"#2E7D5B",greenSoft:"#E8F2EC",amber:"#B8860B",
+red:"#B23A2E",redSoft:"#FAECEA",green:"#2E7D5B",greenSoft:"#E8F2EC",amber:"#B8860B",amberSoft:"#FBF2DC",
 cash:"#2E7D5B",cashBg:"#DDEEE4",card_:"#C9A227",cardBg:"#FBF1C9",after:"#2C6FB0",afterBg:"#D6E6F5",gold:"#A9802B"};
 
-/* ---------- storage (wt_ keys; cloud + local) ---------- */
 function lget(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function lset(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 var _cache={};
@@ -48,58 +47,92 @@ function money(n){n=n||0;return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(unde
 function money0(n){n=n||0;return (n<0?"-":"")+"$"+Math.abs(Math.round(n)).toLocaleString();}
 function uid(){return "x"+Date.now()+Math.floor(Math.random()*999);}
 
-/* ---------- data model ----------
-   categories: [{id,name,kind:'income'|'expense'}]
-   weeks: array of ISO monday strings (generated)
-   cells: { "catId|weekIdx": {amt, method:'cash'|'card'|'after'} }  (income always cash-like, no method)
-   settings: { opening, ccStart, apStart }
+/* ===== WEEKS: fixed, Week 1 = 1 Jul 2026 ===== */
+var WEEK1=new Date(2026,6,1); // Jul 1 2026
+var NWEEKS=13;
+function weekDates(){var a=[];for(var i=0;i<NWEEKS;i++){var d=new Date(WEEK1);d.setDate(d.getDate()+i*7);a.push(d);}return a;}
+function weekRange(i){var s=new Date(WEEK1);s.setDate(s.getDate()+i*7);var e=new Date(s);e.setDate(e.getDate()+6);return [s,e];}
+function wlabel(d){return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}
+function currentWeekIndex(){var now=new Date();now.setHours(0,0,0,0);for(var i=0;i<NWEEKS;i++){var r=weekRange(i);if(now>=r[0]&&now<=r[1])return i;}return now<WEEK1?0:NWEEKS-1;}
+
+/* ===== DATA MODEL =====
+   cats: weekly grid categories [{id,name,kind:'income'|'expense'}]
+   cells: {catId|wi:{amt,method}}
+   bills: [{id,name,amount,freq,due,note}]
+   loans: [{id,name,total,paid,freq,due,note}]
+   expenses: [{id,name,monthly,spent}]   (budget categories)
+   settings:{opening,ccStart,apStart}
 */
 var DEFAULT_CATS=[
- {id:"inc1",name:"Wages",kind:"income"},
- {id:"inc2",name:"Other Income",kind:"income"},
- {id:"c1",name:"Rent",kind:"expense"},
- {id:"c2",name:"Groceries",kind:"expense"},
- {id:"c3",name:"Eat Out",kind:"expense"},
- {id:"c4",name:"Transport",kind:"expense"},
- {id:"c5",name:"Workouts",kind:"expense"},
- {id:"c6",name:"Clothing",kind:"expense"},
- {id:"c7",name:"Entertainment",kind:"expense"},
- {id:"c8",name:"Bills",kind:"expense"},
- {id:"c9",name:"One-off",kind:"expense"}
+ {id:"inc1",name:"Wages",kind:"income"},{id:"inc2",name:"Other Income",kind:"income"},
+ {id:"g1",name:"Groceries",kind:"expense"},{id:"g2",name:"Eat Out",kind:"expense"},
+ {id:"g3",name:"Transport",kind:"expense"},{id:"g4",name:"Bills paid",kind:"expense"},
+ {id:"g5",name:"Shopping",kind:"expense"},{id:"g6",name:"One-off",kind:"expense"}
+];
+var DEFAULT_BILLS=[
+ {id:"b1",name:"Rent",amount:1868,freq:"Monthly",due:21,note:""},
+ {id:"b2",name:"Internet",amount:113,freq:"Monthly",due:22,note:""},
+ {id:"b3",name:"Car Space",amount:130,freq:"Monthly",due:5,note:""},
+ {id:"b4",name:"Manulife Insurance",amount:352.20,freq:"Quarterly",due:24,note:""},
+ {id:"b5",name:"BUPA Insurance",amount:108.85,freq:"Monthly",due:1,note:""},
+ {id:"b6",name:"Sister's Condo",amount:600,freq:"Monthly",due:11,note:"until Dec"},
+ {id:"b7",name:"Workouts",amount:280,freq:"Fortnightly",due:15,note:"15th & 30th"},
+ {id:"b8",name:"Transport (Myki)",amount:1111.50,freq:"Annually",due:1,note:""},
+ {id:"b9",name:"Costco",amount:130,freq:"Annually",due:1,note:""},
+ {id:"b10",name:"MS Office",amount:109,freq:"Annually",due:1,note:""},
+ {id:"b11",name:"Claude AI",amount:351.90,freq:"Monthly",due:15,note:""},
+ {id:"b12",name:"The 9 Fund",amount:80,freq:"Monthly",due:1,note:""},
+ {id:"b13",name:"Savings",amount:800,freq:"Monthly",due:1,note:""},
+ {id:"b14",name:"Fujin (car · my half)",amount:558.63,freq:"Monthly",due:1,note:"26 mo left"}
+];
+var DEFAULT_LOANS=[
+ {id:"l1",name:"Credit Card",total:4235.21,paid:0,freq:"Monthly",due:4,note:"interest",isCard:true},
+ {id:"l2",name:"Afterpay",total:820.33,paid:0,freq:"Monthly",due:1,note:"",isAfter:true},
+ {id:"l3",name:"Loan - Khujan",total:18700,paid:0,freq:"Monthly",due:15,note:"no interest"},
+ {id:"l4",name:"Loan - Snooky",total:16800,paid:0,freq:"Monthly",due:15,note:"no interest"}
+];
+var DEFAULT_EXP=[
+ {id:"e1",name:"Groceries",monthly:100,spent:0},{id:"e2",name:"Eat Out",monthly:100,spent:0},
+ {id:"e3",name:"Body Treats / Massage",monthly:99,spent:0},{id:"e4",name:"Clothing",monthly:25,spent:0},
+ {id:"e5",name:"Entertainment",monthly:25,spent:0},{id:"e6",name:"Travel",monthly:25,spent:0},
+ {id:"e7",name:"Medicines",monthly:25,spent:0},{id:"e8",name:"Doctor / GP",monthly:25,spent:0},
+ {id:"e9",name:"Dental",monthly:25,spent:0},{id:"e10",name:"Skin Care",monthly:25,spent:0},
+ {id:"e11",name:"Gifts",monthly:25,spent:0}
 ];
 
-var cats, cells, settings;
+var cats,cells,bills,loans,expenses,settings;
 function refresh(){
  cats=loadJSON("wt_cats",DEFAULT_CATS);
  cells=loadJSON("wt_cells",{});
- settings=loadJSON("wt_settings",{opening:653.82,ccStart:0,apStart:0});
+ bills=loadJSON("wt_bills",DEFAULT_BILLS);
+ loans=loadJSON("wt_loans",DEFAULT_LOANS);
+ expenses=loadJSON("wt_expenses",DEFAULT_EXP);
+ settings=loadJSON("wt_settings",{opening:653.82,ccStart:4235.21,apStart:820.33});
 }
 refresh();
 function saveCats(){saveJSON("wt_cats",cats);}
 function saveCells(){saveJSON("wt_cells",cells);}
+function saveBills(){saveJSON("wt_bills",bills);}
+function saveLoans(){saveJSON("wt_loans",loans);}
+function saveExp(){saveJSON("wt_expenses",expenses);}
 function saveSettings(){saveJSON("wt_settings",settings);}
 
-/* weeks: 13 mondays starting this week's monday */
-function mondayOf(d){var x=new Date(d);var day=(x.getDay()+6)%7;x.setHours(0,0,0,0);x.setDate(x.getDate()-day);return x;}
-var NWEEKS=13;
-function weekDates(){var base=mondayOf(new Date());var a=[];for(var i=0;i<NWEEKS;i++){var d=new Date(base);d.setDate(d.getDate()+i*7);a.push(d);}return a;}
-function wlabel(d){return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}
+/* ===== freq conversions ===== */
+function monthlyEq(amt,freq){amt=amt||0;return freq==="Weekly"?amt*52/12:freq==="Fortnightly"?amt*26/12:freq==="Monthly"?amt:freq==="Quarterly"?amt/3:freq==="Annually"?amt/12:amt;}
+function weeklyEq(amt,freq){amt=amt||0;return freq==="Weekly"?amt:freq==="Fortnightly"?amt/2:freq==="Monthly"?amt*12/52:freq==="Quarterly"?amt*4/52:freq==="Annually"?amt/52:amt;}
+function nextDue(day){if(!day||day<1)return null;var now=new Date();now.setHours(0,0,0,0);for(var add=0;add<70;add++){var d=new Date(now);d.setDate(d.getDate()+add);if(d.getDate()===day)return d;}return null;}
+function daysUntil(day){var d=nextDue(day);if(!d)return null;return Math.round((d-new Date().setHours(0,0,0,0))/86400000);}
 
-var state={editCell:null, tab:"grid", scrollWeek:0};
-
+/* ===== weekly grid totals ===== */
 function cellKey(catId,wi){return catId+"|"+wi;}
 function getCell(catId,wi){return cells[cellKey(catId,wi)]||null;}
-
-/* ---------- totals ---------- */
 function weekIncome(wi){var s=0;cats.forEach(function(c){if(c.kind==="income"){var e=getCell(c.id,wi);if(e)s+=e.amt;}});return s;}
 function weekCashOut(wi){var s=0;cats.forEach(function(c){if(c.kind==="expense"){var e=getCell(c.id,wi);if(e&&e.method==="cash")s+=e.amt;}});return s;}
 function weekCardOut(wi){var s=0;cats.forEach(function(c){if(c.kind==="expense"){var e=getCell(c.id,wi);if(e&&e.method==="card")s+=e.amt;}});return s;}
 function weekAfterOut(wi){var s=0;cats.forEach(function(c){if(c.kind==="expense"){var e=getCell(c.id,wi);if(e&&e.method==="after")s+=e.amt;}});return s;}
-function weekSpendTotal(wi){return weekCashOut(wi)+weekCardOut(wi)+weekAfterOut(wi);}
-/* running cash balance only reduced by cash spends */
 function runningCash(wi){var bal=settings.opening||0;for(var i=0;i<=wi;i++){bal+=weekIncome(i)-weekCashOut(i);}return bal;}
-function ccBalance(uptoWi){var bal=settings.ccStart||0;for(var i=0;i<=uptoWi;i++){bal+=weekCardOut(i);}return bal;}
-function apBalance(uptoWi){var bal=settings.apStart||0;for(var i=0;i<=uptoWi;i++){bal+=weekAfterOut(i);}return bal;}
+function ccBalance(){var bal=settings.ccStart||0;for(var i=0;i<NWEEKS;i++)bal+=weekCardOut(i);return bal;}
+function apBalance(){var bal=settings.apStart||0;for(var i=0;i<NWEEKS;i++)bal+=weekAfterOut(i);return bal;}
 
 function h(tag,attrs,kids){var e=document.createElement(tag);
  for(var k in attrs){if(k==="style")e.setAttribute("style",attrs[k]);
@@ -107,185 +140,283 @@ function h(tag,attrs,kids){var e=document.createElement(tag);
    else if(k==="html")e.innerHTML=attrs[k];else if(k==="class")e.className=attrs[k];else e.setAttribute(k,attrs[k]);}
  (kids||[]).forEach(function(c){if(c==null)return;e.appendChild(typeof c==="string"?document.createTextNode(c):c);});
  return e;}
+function methodColors(m){if(m==="cash")return{bg:C.cashBg,fg:C.cash};if(m==="card")return{bg:C.cardBg,fg:C.card_};if(m==="after")return{bg:C.afterBg,fg:C.after};return{bg:"#fff",fg:C.ink};}
 
-function methodColors(method){
- if(method==="cash")return {bg:C.cashBg,fg:C.cash};
- if(method==="card")return {bg:C.cardBg,fg:C.card_};
- if(method==="after")return {bg:C.afterBg,fg:C.after};
- return {bg:"#fff",fg:C.ink};
-}
+var state={tab:"dash",editCell:null};
 
 function render(){
  var root=document.getElementById("app");root.innerHTML="";
- var wrap=h("div",{style:"max-width:920px;margin:0 auto;padding:20px 12px 44px;"});
+ var wrap=h("div",{style:"max-width:920px;margin:0 auto;padding:18px 12px 44px;"});
  wrap.appendChild(h("div",{style:"margin-bottom:6px;"},[
-   h("div",{style:"font-size:11px;letter-spacing:.2em;color:"+C.gold+";font-weight:700;"},["WEEKLY TRACKER"]),
-   h("h1",{style:"font-family:Georgia,serif;font-size:26px;line-height:1.05;margin-top:5px;font-weight:700;"},["This week, by colour"])
+   h("div",{style:"font-size:11px;letter-spacing:.2em;color:"+C.gold+";font-weight:700;"},["MY MONEY"]),
+   h("h1",{style:"font-family:Georgia,serif;font-size:25px;line-height:1.05;margin-top:5px;font-weight:700;"},
+     [state.tab==="dash"?"Dashboard":state.tab==="grid"?"Weekly tracker":state.tab==="bills"?"Bills":state.tab==="loans"?"Loans & cards":"Expenses"])
  ]));
  wrap.appendChild(h("div",{style:"display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:99px;margin-bottom:12px;"+
-   (CLOUD?"background:"+C.greenSoft+";color:"+C.green+";border:1px solid "+C.green:"background:#FBF2DC;color:"+C.amber+";border:1px solid "+C.amber)},
+   (CLOUD?"background:"+C.greenSoft+";color:"+C.green+";border:1px solid "+C.green:"background:"+C.amberSoft+";color:"+C.amber+";border:1px solid "+C.amber)},
    [CLOUD?"☁ SYNCED TO CLOUD":"⚠ THIS DEVICE ONLY"]));
 
- // legend
- wrap.appendChild(h("div",{style:"display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;"},[
-   legendDot(C.cash,"Cash"),legendDot(C.card_,"Credit card"),legendDot(C.after,"Afterpay")
- ]));
+ var tabs=h("div",{style:"display:flex;gap:4px;background:"+C.rule+";padding:4px;border-radius:10px;margin-bottom:16px;overflow-x:auto;"});
+ [["dash","Dashboard"],["grid","Weekly"],["bills","Bills"],["loans","Loans"],["exp","Expenses"]].forEach(function(t){
+   var on=state.tab===t[0];
+   tabs.appendChild(h("button",{style:"flex:1;min-width:74px;border:none;background:"+(on?C.card:"transparent")+";padding:9px 0;border-radius:7px;font-size:12.5px;font-weight:600;color:"+(on?C.ink:C.faint)+";"+(on?"box-shadow:0 1px 2px rgba(0,0,0,.06);":""),
+     onclick:function(){state.tab=t[0];render();}},[t[1]]));
+ });
+ wrap.appendChild(tabs);
 
- // balances row
- var lastWi=NWEEKS-1;
- wrap.appendChild(h("div",{style:"display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;"},[
-   balCard("Cash balance",runningCash(currentWeekIndex()),C.ink,"now"),
-   balCard("Credit card",ccBalance(lastWi),C.card_,"owed"),
-   balCard("Afterpay",apBalance(lastWi),C.after,"owed")
- ]));
+ if(state.tab==="dash")renderDash(wrap);
+ else if(state.tab==="grid")renderGrid(wrap);
+ else if(state.tab==="bills")renderBills(wrap);
+ else if(state.tab==="loans")renderLoans(wrap);
+ else renderExp(wrap);
 
- if(state.editCell)wrap.appendChild(renderEditor());
-
- wrap.appendChild(renderGrid());
-
- // add category + settings
- wrap.appendChild(h("div",{style:"display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;"},[
-   h("button",{style:"border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:10px;padding:11px 14px;font-size:13px;font-weight:600;",
-     onclick:function(){addCategory();}},["+ Add category"]),
-   h("button",{style:"border:1px solid "+C.rule+";background:"+C.card+";color:"+C.ink+";border-radius:10px;padding:11px 14px;font-size:13px;font-weight:600;",
-     onclick:function(){editSettings();}},["⚙ Opening / start balances"])
- ]));
-
- wrap.appendChild(h("div",{style:"font-size:11px;color:"+C.faint+";text-align:center;line-height:1.5;margin-top:16px;"},
-   ["Tap any cell to log an amount and choose Cash / Card / Afterpay. Card & Afterpay add to those balances; only cash reduces your cash balance."]));
  root.appendChild(wrap);
 }
-function legendDot(color,label){return h("span",{style:"display:flex;align-items:center;gap:6px;"},[
-  h("span",{style:"width:13px;height:13px;border-radius:3px;background:"+color+";display:inline-block;"},[]),
-  h("span",{style:"color:"+C.ink+";font-weight:600;"},[label])]);}
-function balCard(label,val,color,suffix){return h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:12px 13px;"},[
-  h("div",{style:"font-size:11px;color:"+C.faint+";font-weight:600;"},[label]),
-  h("div",{style:"font-family:Georgia,serif;font-size:20px;font-weight:700;margin-top:2px;color:"+(val<0&&suffix==="now"?C.red:color)+";"},[money0(val)]),
-  h("div",{style:"font-size:10px;color:"+C.faint+";"},[suffix])]);}
 
-function currentWeekIndex(){return 0;} // week 0 is current week (this monday)
+/* ===================== DASHBOARD ===================== */
+function renderDash(wrap){
+ var lastWi=NWEEKS-1;
+ // balances
+ wrap.appendChild(h("div",{style:"display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;"},[
+   balCard("Cash balance",runningCash(currentWeekIndex()),C.ink,"now"),
+   balCard("Credit card",ccBalance(),C.card_,"owed"),
+   balCard("Afterpay",apBalance(),C.after,"owed")
+ ]));
+ // due windows (bills + loans)
+ var items=[];
+ bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null)items.push({name:b.name,amt:b.amount,du:du,nd:nextDue(b.due)});});
+ loans.forEach(function(l){var du=daysUntil(l.due);if(du!=null){var owe=Math.max(0,(l.total||0)-(l.paid||0));items.push({name:l.name,amt:owe,du:du,nd:nextDue(l.due),loan:true});}});
+ function sumWithin(n){var s=0;items.forEach(function(it){if(it.du>=0&&it.du<=n)s+=it.amt;});return s;}
+ wrap.appendChild(dueRow("⏰ Due next 7 days",sumWithin(7),C.red));
+ wrap.appendChild(dueRow("📅 Due next 14 days",sumWithin(14),C.amber));
 
-function renderGrid(){
+ // can I cover it (next 7 days vs cash + this week's income remaining)
+ var cashNow=runningCash(currentWeekIndex());
+ var need7=sumWithin(7);
+ var diff=cashNow-need7;
+ wrap.appendChild(h("div",{style:"border:1.5px solid "+(diff>=0?C.green:C.red)+";background:"+(diff>=0?C.greenSoft:C.redSoft)+";border-radius:12px;padding:13px 15px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:12px;font-weight:700;color:"+(diff>=0?C.green:C.red)+";"},[diff>=0?("Covered for next 7 days — "+money0(diff)+" to spare"):("Short for next 7 days by "+money0(-diff))]),
+   h("div",{style:"font-size:11.5px;color:"+C.ink+";margin-top:3px;"},["Cash "+money0(cashNow)+" vs "+money0(need7)+" due"])
+ ]));
+
+ // upcoming list
+ items.sort(function(a,b){return a.du-b.du;});
+ var up=items.filter(function(it){return it.du>=0&&it.du<=14;});
+ var box=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:13px 15px;margin-bottom:14px;"});
+ box.appendChild(h("div",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:9px;"},["What's coming up (14 days)"]));
+ if(up.length===0)box.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";"},["Nothing due in the next 14 days."]));
+ up.forEach(function(it){box.appendChild(h("div",{style:"display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid "+C.rule+";font-size:13px;"},[
+   h("span",{},[it.name+"  ·  "+(it.du===0?"today":it.du===1?"tomorrow":"in "+it.du+" days")]),
+   h("span",{style:"font-weight:700;"},[money0(it.amt)])]));});
+ wrap.appendChild(box);
+
+ // monthly cash flow summary (from bills/loans/expenses monthly-equiv + income)
+ var incomeM=0;cats.forEach(function(c){}); // income monthly handled via weekly grid; here use plan-style: wages weekly*52/12
+ // simpler: monthly income estimate from settings? Use sum of bills/loans/exp out vs typical pay. We'll show plan out:
+ var billsM=bills.reduce(function(s,b){return s+monthlyEq(b.amount,b.freq);},0);
+ var loansM=loans.reduce(function(s,l){return s+monthlyEq(l.total&&l.freq?0:0,l.freq);},0); // loans paid variably; skip
+ var expM=expenses.reduce(function(s,e){return s+(e.monthly||0);},0);
+ var box2=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:13px 15px;margin-bottom:14px;"});
+ box2.appendChild(h("div",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:9px;"},["Monthly plan (out)"]));
+ box2.appendChild(kvRow("Bills",billsM,C.red));
+ box2.appendChild(kvRow("Spending budget",expM,C.amber));
+ box2.appendChild(kvRow("Total planned out",billsM+expM,C.ink,true));
+ wrap.appendChild(box2);
+
+ // spending by category (expenses spent)
+ var totalSpent=expenses.reduce(function(s,e){return s+(e.spent||0);},0);
+ var sb=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:13px 15px;"});
+ sb.appendChild(h("div",{style:"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:9px;"},["Spending by category (this month)"]));
+ if(totalSpent===0)sb.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";"},["Log spending on the Expenses tab to see the breakdown."]));
+ else{
+   var mx=Math.max.apply(null,expenses.map(function(e){return e.spent||0;}));
+   expenses.filter(function(e){return (e.spent||0)>0;}).sort(function(a,b){return b.spent-a.spent;}).forEach(function(e){
+     sb.appendChild(h("div",{style:"margin-bottom:8px;"},[
+       h("div",{style:"display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px;"},[h("span",{},[e.name]),h("span",{style:"font-weight:700;"},[money(e.spent)])]),
+       h("div",{style:"height:7px;background:"+C.rule+";border-radius:99px;overflow:hidden;"},[h("div",{style:"height:100%;width:"+((e.spent/mx)*100)+"%;background:"+C.gold+";border-radius:99px;"},[])])
+     ]));
+   });
+ }
+ wrap.appendChild(sb);
+}
+function balCard(label,val,color,suffix){return h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:11px 12px;"},[
+  h("div",{style:"font-size:10.5px;color:"+C.faint+";font-weight:600;"},[label]),
+  h("div",{style:"font-family:Georgia,serif;font-size:18px;font-weight:700;margin-top:2px;color:"+(val<0&&suffix==="now"?C.red:color)+";"},[money0(val)]),
+  h("div",{style:"font-size:9.5px;color:"+C.faint+";"},[suffix])]);}
+function dueRow(label,val,color){return h("div",{style:"display:flex;justify-content:space-between;align-items:center;background:"+C.card+";border:1px solid "+C.rule+";border-radius:10px;padding:11px 14px;margin-bottom:9px;"},[
+  h("span",{style:"font-size:13px;font-weight:700;color:"+color+";"},[label]),
+  h("span",{style:"font-family:Georgia,serif;font-size:18px;font-weight:700;color:"+color+";"},[money0(val)])]);}
+function kvRow(label,val,color,bold){return h("div",{style:"display:flex;justify-content:space-between;padding:5px 0;font-size:13px;"+(bold?"border-top:1px solid "+C.rule+";margin-top:3px;padding-top:7px;":""),},[
+  h("span",{style:"font-weight:"+(bold?"700":"500")+";"},[label]),h("span",{style:"font-weight:700;color:"+color+";"},[money(val)])]);}
+
+/* ===================== WEEKLY GRID ===================== */
+function renderGrid(wrap){
+ wrap.appendChild(h("div",{style:"display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;"},[
+   legendDot(C.cash,"Cash"),legendDot(C.card_,"Credit card"),legendDot(C.after,"Afterpay")]));
+ if(state.editCell)wrap.appendChild(renderEditor());
  var dates=weekDates();
  var box=h("div",{class:"gridwrap",style:"border:1px solid "+C.rule+";border-radius:12px;background:"+C.card+";"});
  var tbl=h("table",{style:"width:100%;font-size:12px;"});
- // header
  var thr=h("tr",{});
- thr.appendChild(h("th",{style:"position:sticky;left:0;background:"+C.ink+";color:#fff;text-align:left;padding:9px 10px;font-size:11px;min-width:120px;z-index:2;"},["Category"]));
- dates.forEach(function(d,i){
-   thr.appendChild(h("th",{style:"background:"+C.ink+";color:#fff;padding:6px 8px;font-size:10.5px;min-width:64px;text-align:center;"},[
-     h("div",{},["W"+(i+1)]),h("div",{style:"font-weight:400;color:#C9C0B0;font-size:9.5px;"},[wlabel(d)])]));
- });
+ thr.appendChild(h("th",{style:"position:sticky;left:0;background:"+C.ink+";color:#fff;text-align:left;padding:9px 10px;font-size:11px;min-width:110px;z-index:2;"},["Category"]));
+ dates.forEach(function(d,i){thr.appendChild(h("th",{style:"background:"+C.ink+";color:#fff;padding:6px 8px;font-size:10.5px;min-width:62px;text-align:center;"},[
+   h("div",{},["W"+(i+1)]),h("div",{style:"font-weight:400;color:#C9C0B0;font-size:9.5px;"},[wlabel(d)])]));});
  tbl.appendChild(thr);
-
  function section(kind,label,color){
-   var hr=h("tr",{});
-   hr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.paper+";color:"+color+";font-weight:700;font-size:10.5px;letter-spacing:.04em;padding:6px 10px;text-transform:uppercase;z-index:1;",colspan:String(NWEEKS+1)},[label]));
-   tbl.appendChild(hr);
+   tbl.appendChild(h("tr",{},[h("td",{style:"position:sticky;left:0;background:"+C.paper+";color:"+color+";font-weight:700;font-size:10.5px;padding:6px 10px;text-transform:uppercase;z-index:1;",colspan:String(NWEEKS+1)},[label])]));
    cats.filter(function(c){return c.kind===kind;}).forEach(function(c){
      var tr=h("tr",{});
-     var nameTd=h("td",{style:"position:sticky;left:0;background:"+C.card+";padding:7px 10px;font-weight:600;border-top:1px solid "+C.rule+";min-width:120px;z-index:1;"},[
+     tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.card+";padding:7px 10px;font-weight:600;border-top:1px solid "+C.rule+";z-index:1;"},[
        h("span",{},[c.name]),
-       h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:10px;margin-left:6px;text-decoration:underline;",
-         onclick:function(){renameCategory(c);}},["edit"])
-     ]);
-     tr.appendChild(nameTd);
-     dates.forEach(function(d,wi){
-       var e=getCell(c.id,wi);
-       var col=e?methodColors(e.method):{bg:"#fff",fg:C.ink};
-       var td=h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;text-align:center;",
-         onclick:function(){openCell(c,wi);}},[
-         h("div",{style:"min-height:34px;display:flex;align-items:center;justify-content:center;background:"+col.bg+";color:"+col.fg+";font-weight:700;font-size:11.5px;cursor:pointer;padding:4px;"},
-           [e?money0(e.amt):""])
-       ]);
-       tr.appendChild(td);
-     });
+       h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:10px;margin-left:5px;text-decoration:underline;",onclick:function(){renameCat(c);}},["edit"])]));
+     dates.forEach(function(d,wi){var e=getCell(c.id,wi);var col=e?methodColors(e.method):{bg:"#fff",fg:C.ink};
+       tr.appendChild(h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;",onclick:function(){openCell(c,wi);}},[
+         h("div",{style:"min-height:34px;display:flex;align-items:center;justify-content:center;background:"+col.bg+";color:"+col.fg+";font-weight:700;font-size:11.5px;padding:4px;"},[e?money0(e.amt):""])]));});
      tbl.appendChild(tr);
    });
  }
  section("income","Income",C.green);
  section("expense","Expenses",C.red);
-
- // totals rows
- function totalRow(label,fn,color,bold){
-   var tr=h("tr",{});
+ function totRow(label,fn,color,bold){var tr=h("tr",{});
    tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.paper+";padding:7px 10px;font-weight:"+(bold?"700":"600")+";font-size:11px;color:"+color+";border-top:2px solid "+C.rule+";z-index:1;"},[label]));
-   for(var wi=0;wi<NWEEKS;wi++){
-     var v=fn(wi);
-     tr.appendChild(h("td",{style:"text-align:center;padding:7px 4px;font-weight:700;font-size:11px;color:"+color+";border-top:2px solid "+C.rule+";"},[v?money0(v):"–"]));
-   }
-   tbl.appendChild(tr);
- }
- totalRow("Income",weekIncome,C.green,true);
- totalRow("Cash out",weekCashOut,C.cash,false);
- totalRow("Card out",weekCardOut,C.card_,false);
- totalRow("Afterpay out",weekAfterOut,C.after,false);
- totalRow("Cash balance",runningCash,C.ink,true);
-
+   for(var wi=0;wi<NWEEKS;wi++){var v=fn(wi);tr.appendChild(h("td",{style:"text-align:center;padding:7px 4px;font-weight:700;font-size:11px;color:"+color+";border-top:2px solid "+C.rule+";"},[v?money0(v):"–"]));}
+   tbl.appendChild(tr);}
+ totRow("Income",weekIncome,C.green,true);
+ totRow("Cash out",weekCashOut,C.cash,false);
+ totRow("Card out",weekCardOut,C.card_,false);
+ totRow("Afterpay out",weekAfterOut,C.after,false);
+ totRow("Cash balance",runningCash,C.ink,true);
  box.appendChild(tbl);
- return box;
+ wrap.appendChild(box);
+ wrap.appendChild(h("button",{style:"border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:10px;padding:11px 14px;font-size:13px;font-weight:600;margin-top:12px;",
+   onclick:function(){addCat();}},["+ Add category"]));
+ wrap.appendChild(h("button",{style:"border:1px solid "+C.rule+";background:"+C.card+";color:"+C.ink+";border-radius:10px;padding:11px 14px;font-size:13px;font-weight:600;margin-top:12px;margin-left:8px;",
+   onclick:function(){editSettings();}},["⚙ Balances"]));
 }
+function legendDot(color,label){return h("span",{style:"display:flex;align-items:center;gap:6px;"},[h("span",{style:"width:13px;height:13px;border-radius:3px;background:"+color+";display:inline-block;"},[]),h("span",{style:"font-weight:600;"},[label])]);}
 
-function openCell(cat,wi){
- var e=getCell(cat.id,wi);
- state.editCell={catId:cat.id,catName:cat.name,kind:cat.kind,wi:wi,amt:e?String(e.amt):"",method:e?e.method:(cat.kind==="income"?"cash":"cash")};
- render();
-}
+function openCell(cat,wi){var e=getCell(cat.id,wi);state.editCell={catId:cat.id,catName:cat.name,kind:cat.kind,wi:wi,amt:e?String(e.amt):"",method:e?e.method:"cash"};render();}
 function closeCell(){state.editCell=null;render();}
-function renderEditor(){
- var ec=state.editCell;
- var amtInp=h("input",{inputmode:"decimal",value:ec.amt,placeholder:"0.00",
-   style:"width:100%;border:1px solid "+C.ink+";background:#fff;border-radius:8px;padding:12px 12px 12px 26px;font-weight:700;font-size:18px;color:"+C.ink+";"});
+function renderEditor(){var ec=state.editCell;
+ var amtInp=h("input",{inputmode:"decimal",value:ec.amt,placeholder:"0.00",style:"width:100%;border:1px solid "+C.ink+";background:#fff;border-radius:8px;padding:12px 12px 12px 26px;font-weight:700;font-size:18px;color:"+C.ink+";"});
  amtInp.addEventListener("input",function(e){ec.amt=e.target.value;});
- function methodBtn(mkey,label,color,bg){
-   var on=ec.method===mkey;
-   return h("button",{style:"flex:1;border:2px solid "+color+";background:"+(on?bg:"#fff")+";color:"+color+";border-radius:8px;padding:11px 0;font-size:13px;font-weight:700;",
-     onclick:function(){ec.method=mkey;render();}},[(on?"✓ ":"")+label]);
- }
- var methodRow = ec.kind==="income"
-   ? h("div",{style:"font-size:12px;color:"+C.faint+";"},["Income is added to your cash balance."])
-   : h("div",{style:"display:flex;gap:7px;"},[
-       methodBtn("cash","Cash",C.cash,C.cashBg),
-       methodBtn("card","Credit card",C.card_,C.cardBg),
-       methodBtn("after","Afterpay",C.after,C.afterBg)
-     ]);
+ function mb(mk,label,color,bg){var on=ec.method===mk;return h("button",{style:"flex:1;border:2px solid "+color+";background:"+(on?bg:"#fff")+";color:"+color+";border-radius:8px;padding:11px 0;font-size:12.5px;font-weight:700;",onclick:function(){ec.method=mk;render();}},[(on?"✓ ":"")+label]);}
+ var methodRow=ec.kind==="income"?h("div",{style:"font-size:12px;color:"+C.faint+";"},["Income adds to your cash balance."]):h("div",{style:"display:flex;gap:7px;"},[mb("cash","Cash",C.cash,C.cashBg),mb("card","Card",C.card_,C.cardBg),mb("after","Afterpay",C.after,C.afterBg)]);
  return h("div",{style:"background:"+C.card+";border:1.5px solid "+C.ink+";border-radius:14px;padding:16px;margin-bottom:14px;"},[
    h("div",{style:"font-size:14px;font-weight:700;margin-bottom:10px;"},[ec.catName+" · W"+(ec.wi+1)]),
-   h("div",{style:"position:relative;margin-bottom:11px;"},[
-     h("span",{style:"position:absolute;left:11px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:17px;"},["$"]),amtInp]),
-   h("div",{style:"font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:6px;"},[ec.kind==="income"?"":"Paid by (colour)"]),
+   h("div",{style:"position:relative;margin-bottom:11px;"},[h("span",{style:"position:absolute;left:11px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:17px;"},["$"]),amtInp]),
+   ec.kind==="income"?null:h("div",{style:"font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:6px;"},["Paid by (colour)"]),
    methodRow,
    h("div",{style:"display:flex;gap:8px;margin-top:13px;"},[
-     h("button",{style:"flex:1;border:none;background:"+C.ink+";color:#fff;border-radius:8px;padding:12px;font-size:14px;font-weight:700;",
-       onclick:function(){saveCell();}},["Save"]),
-     getCell(ec.catId,ec.wi)?h("button",{style:"border:1px solid "+C.red+";background:#fff;color:"+C.red+";border-radius:8px;padding:12px 16px;font-size:14px;font-weight:600;",
-       onclick:function(){clearCell();}},["Clear"]):null,
-     h("button",{style:"border:1px solid "+C.rule+";background:"+C.paper+";color:"+C.ink+";border-radius:8px;padding:12px 16px;font-size:14px;font-weight:600;",
-       onclick:closeCell},["Cancel"])
-   ])
+     h("button",{style:"flex:1;border:none;background:"+C.ink+";color:#fff;border-radius:8px;padding:12px;font-size:14px;font-weight:700;",onclick:saveCell},["Save"]),
+     getCell(ec.catId,ec.wi)?h("button",{style:"border:1px solid "+C.red+";background:#fff;color:"+C.red+";border-radius:8px;padding:12px 16px;font-size:14px;font-weight:600;",onclick:clearCell},["Clear"]):null,
+     h("button",{style:"border:1px solid "+C.rule+";background:"+C.paper+";color:"+C.ink+";border-radius:8px;padding:12px 16px;font-size:14px;font-weight:600;",onclick:closeCell},["Cancel"])])
  ]);
 }
-function saveCell(){var ec=state.editCell;var v=parseFloat(ec.amt);
- if(isNaN(v)||v<=0){clearCell();return;}
- cells[cellKey(ec.catId,ec.wi)]={amt:+v.toFixed(2),method:ec.method};saveCells();state.editCell=null;render();}
+function saveCell(){var ec=state.editCell;var v=parseFloat(ec.amt);if(isNaN(v)||v<=0){clearCell();return;}cells[cellKey(ec.catId,ec.wi)]={amt:+v.toFixed(2),method:ec.method};saveCells();state.editCell=null;render();}
 function clearCell(){var ec=state.editCell;delete cells[cellKey(ec.catId,ec.wi)];saveCells();state.editCell=null;render();}
+function addCat(){var name=prompt("New category name:","");if(!name)return;var isInc=confirm("Is this INCOME?\nOK=Income, Cancel=Expense");cats.push({id:uid(),name:name.trim(),kind:isInc?"income":"expense"});saveCats();render();}
+function renameCat(c){var name=prompt("Rename (blank to delete):",c.name);if(name===null)return;if(name.trim()===""){if(confirm("Delete "+c.name+"?")){cats=cats.filter(function(x){return x.id!==c.id;});saveCats();render();}return;}c.name=name.trim();saveCats();render();}
+function editSettings(){var o=prompt("Opening cash balance ($):",String(settings.opening||0));if(o!==null)settings.opening=parseFloat(o)||0;var cc=prompt("Starting credit card balance ($):",String(settings.ccStart||0));if(cc!==null)settings.ccStart=parseFloat(cc)||0;var ap=prompt("Starting Afterpay balance ($):",String(settings.apStart||0));if(ap!==null)settings.apStart=parseFloat(ap)||0;saveSettings();render();}
 
-function addCategory(){
- var name=prompt("New category name:","");if(!name)return;
- var isInc=confirm("Is this INCOME?\n\nOK = Income\nCancel = Expense");
- cats.push({id:uid(),name:name.trim(),kind:isInc?"income":"expense"});saveCats();render();
+/* ===================== BILLS ===================== */
+function renderBills(wrap){
+ var totalM=bills.reduce(function(s,b){return s+monthlyEq(b.amount,b.freq);},0);
+ var totalW=bills.reduce(function(s,b){return s+weeklyEq(b.amount,b.freq);},0);
+ wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:12px;color:"+C.faint+";font-weight:600;"},["Bills total"]),
+   h("div",{style:"font-family:Georgia,serif;font-size:24px;font-weight:700;"},[money(totalM)+" /mo"]),
+   h("div",{style:"font-size:12px;color:"+C.faint+";margin-top:3px;"},["set aside ~"+money0(totalW)+"/week"])]));
+ bills.forEach(function(b){
+   var du=daysUntil(b.due);
+   wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:11px;padding:12px 14px;margin-bottom:9px;"},[
+     h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;"},[
+       h("span",{style:"font-size:15px;font-weight:700;"},[b.name]),
+       h("span",{style:"font-size:15px;font-weight:700;"},[money(b.amount)])]),
+     h("div",{style:"font-size:11.5px;color:"+C.faint+";margin-top:2px;"},[b.freq+" · due "+b.due+(b.note?" · "+b.note:"")+(du!=null?"  ·  "+(du===0?"today":"in "+du+"d"):"")]),
+     h("div",{style:"display:flex;gap:12px;margin-top:8px;"},[
+       h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",onclick:function(){editBill(b);}},["edit"]),
+       h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",onclick:function(){if(confirm("Remove "+b.name+"?")){bills=bills.filter(function(x){return x.id!==b.id;});saveBills();render();}}},["remove"])])]));
+ });
+ wrap.appendChild(h("button",{style:"width:100%;border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:11px;padding:13px;font-size:14px;font-weight:600;margin-top:4px;",onclick:function(){editBill(null);}},["+ Add a bill"]));
 }
-function renameCategory(c){
- var name=prompt("Rename:",c.name);if(name===null)return;
- if(name.trim()===""){if(confirm("Delete "+c.name+"? (its logged amounts stay in storage)")){cats=cats.filter(function(x){return x.id!==c.id;});saveCats();render();}return;}
- c.name=name.trim();saveCats();render();
+function editBill(b){var isNew=!b;
+ var name=prompt(isNew?"Bill name:":"Name:",isNew?"":b.name);if(name===null)return;
+ var amount=prompt("Amount ($):",isNew?"":String(b.amount));if(amount===null)return;amount=parseFloat(amount)||0;
+ var freq=prompt("Term: Weekly / Fortnightly / Monthly / Quarterly / Annually",isNew?"Monthly":b.freq);if(freq===null)return;
+ var due=prompt("Due day of month (1-31):",isNew?"1":String(b.due));if(due===null)return;due=parseInt(due)||1;
+ var note=prompt("Note (optional):",isNew?"":(b.note||""));if(note===null)note="";
+ if(isNew)bills.push({id:uid(),name:name.trim(),amount:amount,freq:freq.trim(),due:due,note:note.trim()});
+ else{b.name=name.trim();b.amount=amount;b.freq=freq.trim();b.due=due;b.note=note.trim();}
+ saveBills();render();}
+
+/* ===================== LOANS ===================== */
+function renderLoans(wrap){
+ var owed=loans.reduce(function(s,l){return s+Math.max(0,(l.total||0)-(l.paid||0));},0);
+ wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:12px;color:"+C.faint+";font-weight:600;"},["Total still owed"]),
+   h("div",{style:"font-family:Georgia,serif;font-size:24px;font-weight:700;"},[money(owed)])]));
+ loans.forEach(function(l){
+   var rem=Math.max(0,(l.total||0)-(l.paid||0));var pct=l.total>0?Math.min(100,(l.paid/l.total)*100):0;var done=rem<=0;
+   var sec=h("div",{style:"background:"+C.card+";border:1px solid "+(done?C.green:C.rule)+";border-radius:11px;padding:12px 14px;margin-bottom:9px;"},[
+     h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;"},[
+       h("span",{style:"font-size:15px;font-weight:700;"},[l.name]),
+       h("span",{style:"font-size:15px;font-weight:700;color:"+(done?C.green:C.ink)+";"},[done?"CLEARED ✓":money(rem)])]),
+     h("div",{style:"font-size:11.5px;color:"+C.faint+";margin:2px 0 8px;"},[l.freq+" · due "+l.due+(l.note?" · "+l.note:"")]),
+     h("div",{style:"height:7px;background:"+C.rule+";border-radius:99px;overflow:hidden;"},[h("div",{style:"height:100%;width:"+pct+"%;background:"+(done?C.green:C.ink)+";border-radius:99px;"},[])]),
+     h("div",{style:"display:flex;justify-content:space-between;font-size:11.5px;color:"+C.faint+";margin-top:6px;"},[h("span",{},["paid "+money(l.paid||0)+" of "+money(l.total)]),h("span",{},[Math.round(pct)+"%"])])
+   ]);
+   if(!done){var pin=h("input",{inputmode:"decimal",placeholder:"log a payment",style:"flex:1;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:9px 10px 9px 22px;font-weight:700;font-size:14px;color:"+C.ink+";"});
+     sec.appendChild(h("div",{style:"position:relative;display:flex;gap:8px;margin-top:9px;"},[
+       h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:9px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:14px;"},["$"]),pin]),
+       h("button",{style:"border:none;background:"+C.ink+";color:#fff;border-radius:8px;padding:0 16px;font-size:13px;font-weight:700;",onclick:function(){var v=parseFloat(pin.value);if(!v||v<=0)return;l.paid=(l.paid||0)+v;saveLoans();render();}},["Pay"])]));}
+   sec.appendChild(h("div",{style:"display:flex;gap:12px;margin-top:9px;"},[
+     h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",onclick:function(){editLoan(l);}},["edit"]),
+     h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",onclick:function(){if(confirm("Remove "+l.name+"?")){loans=loans.filter(function(x){return x.id!==l.id;});saveLoans();render();}}},["remove"])]));
+   wrap.appendChild(sec);
+ });
+ wrap.appendChild(h("button",{style:"width:100%;border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:11px;padding:13px;font-size:14px;font-weight:600;margin-top:4px;",onclick:function(){editLoan(null);}},["+ Add a loan / card"]));
 }
-function editSettings(){
- var o=prompt("Opening cash balance ($):",String(settings.opening||0));if(o!==null)settings.opening=parseFloat(o)||0;
- var cc=prompt("Starting credit card balance ($):",String(settings.ccStart||0));if(cc!==null)settings.ccStart=parseFloat(cc)||0;
- var ap=prompt("Starting Afterpay balance ($):",String(settings.apStart||0));if(ap!==null)settings.apStart=parseFloat(ap)||0;
- saveSettings();render();
+function editLoan(l){var isNew=!l;
+ var name=prompt(isNew?"Loan / card name:":"Name:",isNew?"":l.name);if(name===null)return;
+ var total=prompt("Total owed ($):",isNew?"":String(l.total));if(total===null)return;total=parseFloat(total)||0;
+ var freq=prompt("Payment term: Weekly / Fortnightly / Monthly / Quarterly / Annually",isNew?"Monthly":l.freq);if(freq===null)return;
+ var due=prompt("Due day of month (1-31):",isNew?"1":String(l.due));if(due===null)return;due=parseInt(due)||1;
+ var note=prompt("Note (optional):",isNew?"":(l.note||""));if(note===null)note="";
+ if(isNew)loans.push({id:uid(),name:name.trim(),total:total,paid:0,freq:freq.trim(),due:due,note:note.trim()});
+ else{l.name=name.trim();l.total=total;l.freq=freq.trim();l.due=due;l.note=note.trim();}
+ saveLoans();render();}
+
+/* ===================== EXPENSES (budget categories) ===================== */
+function renderExp(wrap){
+ var totalB=expenses.reduce(function(s,e){return s+(e.monthly||0);},0);
+ var totalS=expenses.reduce(function(s,e){return s+(e.spent||0);},0);
+ wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-bottom:14px;"},[
+   h("div",{style:"display:flex;justify-content:space-between;"},[
+     h("div",{},[h("div",{style:"font-size:12px;color:"+C.faint+";font-weight:600;"},["Spent this month"]),h("div",{style:"font-family:Georgia,serif;font-size:22px;font-weight:700;"},[money(totalS)])]),
+     h("div",{style:"text-align:right;"},[h("div",{style:"font-size:12px;color:"+C.faint+";font-weight:600;"},["Budget"]),h("div",{style:"font-size:15px;font-weight:700;margin-top:4px;"},[money(totalB)])])])]));
+ expenses.forEach(function(e){
+   var pct=e.monthly>0?Math.min(100,((e.spent||0)/e.monthly)*100):0;var over=(e.spent||0)>e.monthly&&e.monthly>0;
+   wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:11px;padding:12px 14px;margin-bottom:9px;"},[
+     h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;"},[
+       h("span",{style:"font-size:14px;font-weight:700;"},[e.name]),
+       h("span",{style:"font-size:13.5px;font-weight:700;color:"+(over?C.red:C.ink)+";"},[money(e.spent||0)+" / "+money(e.monthly)])]),
+     h("div",{style:"height:6px;background:"+C.rule+";border-radius:99px;overflow:hidden;margin:7px 0;"},[h("div",{style:"height:100%;width:"+pct+"%;background:"+(over?C.red:C.gold)+";border-radius:99px;"},[])]),
+     h("div",{style:"display:flex;gap:8px;"},[
+       (function(){var i=h("input",{inputmode:"decimal",placeholder:"add spend",style:"flex:1;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:8px 10px 8px 20px;font-weight:700;font-size:13px;color:"+C.ink+";"});
+        return h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:8px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:13px;"},["$"]),i,h("button",{style:"display:none",onclick:function(){}},[])]);})(),
+       h("button",{style:"border:none;background:"+C.gold+";color:#fff;border-radius:8px;padding:0 14px;font-size:12.5px;font-weight:700;",onclick:function(ev){var inp=ev.target.parentNode.querySelector("input");var v=parseFloat(inp.value);if(!v||v<=0)return;e.spent=(e.spent||0)+v;saveExp();render();}},["+ Spend"]),
+       h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11px;text-decoration:underline;",onclick:function(){editExp(e);}},["edit"])])]));
+ });
+ wrap.appendChild(h("button",{style:"width:100%;border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:11px;padding:13px;font-size:14px;font-weight:600;margin-top:4px;",onclick:function(){editExp(null);}},["+ Add an expense category"]));
+ if(totalS>0)wrap.appendChild(h("button",{style:"width:100%;border:none;background:none;color:"+C.faint+";font-size:12px;text-decoration:underline;margin-top:10px;",onclick:function(){if(confirm("Reset all 'spent' to 0 for a new month?")){expenses.forEach(function(e){e.spent=0;});saveExp();render();}}},["↻ Reset spending for new month"]));
 }
+function editExp(e){var isNew=!e;
+ var name=prompt(isNew?"Category name:":"Name:",isNew?"":e.name);if(name===null)return;
+ var monthly=prompt("Monthly budget ($):",isNew?"":String(e.monthly));if(monthly===null)return;monthly=parseFloat(monthly)||0;
+ if(isNew)expenses.push({id:uid(),name:name.trim(),monthly:monthly,spent:0});
+ else{e.name=name.trim();e.monthly=monthly;}
+ saveExp();render();}
 
 render();
 cloudLoad(function(){refresh();render();});
