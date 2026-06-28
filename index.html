@@ -146,8 +146,9 @@ function totalReserved(){return pots.reduce(function(s,p){return s+(p.reserved||
 /* free cash = opening + all income - all cash spends - all reservations(net) ; but reservations move free->pot,
    and pot spends reduce pot. So: freeCash = opening + sum(income) - sum(cashOut) - sum(reservedNet)
    where reservedNet = current total reserved in pots. Pot spends already reduced pot, not cash. */
-function sumIncomeAll(){var s=0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++)s+=yWeekIncome(y,wi);});return s;}
-function sumCashOutAll(){var s=0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++)s+=yWeekOut(y,wi,"cash");});return s;}
+function weekHasStarted(y,wi){var ws=weekDate(y,wi);ws.setHours(0,0,0,0);var today=new Date();today.setHours(0,0,0,0);return ws<=today;}
+function sumIncomeAll(){var s=0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){if(weekHasStarted(y,wi))s+=yWeekIncome(y,wi);}});return s;}
+function sumCashOutAll(){var s=0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){if(weekHasStarted(y,wi))s+=yWeekOut(y,wi,"cash");}});return s;}
 function freeCash(){return (settings.opening||0)+sumIncomeAll()-sumCashOutAll()-totalReserved();}
 function totalCash(){return freeCash()+totalReserved();}
 /* running cash balance per week within current year (free cash trajectory) */
@@ -167,9 +168,9 @@ function loanCurrentBalance(l){var nm=(l.name||"").toLowerCase();
 }
 function loanByMatch(kw){return loans.filter(function(l){return (l.name||"").toLowerCase().indexOf(kw)>=0;})[0];}
 // payments toward a loan = cash/pot logged on that loan's grid row
-function loanPayments(l){var s=0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){var e=cells[cellKey(y,loanCatId(l),wi)];if(e&&(e.method==="cash"||e.method==="pot"))s+=e.amt;}});return s;}
+function loanPayments(l){var s=0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){if(!weekHasStarted(y,wi))continue;var e=cells[cellKey(y,loanCatId(l),wi)];if(e&&(e.method==="cash"||e.method==="pot"))s+=e.amt;}});return s;}
 // card spends = 'card' method anywhere EXCEPT on the card loan row (that row is for payments)
-function methodSpendExcludingLoanRow(method,loanRowId){var s=0;var g=rowIdsByGroup();allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){Object.keys(g.out).forEach(function(id){if(id===loanRowId)return;var e=cells[cellKey(y,id,wi)];if(e&&e.method===method)s+=e.amt;});}});return s;}
+function methodSpendExcludingLoanRow(method,loanRowId){var s=0;var g=rowIdsByGroup();allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){if(!weekHasStarted(y,wi))continue;Object.keys(g.out).forEach(function(id){if(id===loanRowId)return;var e=cells[cellKey(y,id,wi)];if(e&&e.method===method)s+=e.amt;});}});return s;}
 
 function ccBalance(){var cc=loanByMatch("credit");var s=settings.ccStart||0;s+=methodSpendExcludingLoanRow("card",cc?loanCatId(cc):null);if(cc)s-=loanPayments(cc);return s;}
 function apBalance(){var ap=loanByMatch("afterpay");var s=settings.apStart||0;s+=methodSpendExcludingLoanRow("after",ap?loanCatId(ap):null);if(ap)s-=loanPayments(ap);return s;}
