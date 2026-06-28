@@ -120,8 +120,15 @@ function cellKey(y,catId,wi){return y+"|"+catId+"|"+wi;}
 function getCell(catId,wi){return cells[cellKey(curYear(),catId,wi)]||null;}
 function setCell(catId,wi,obj){var k=cellKey(curYear(),catId,wi);if(obj==null)delete cells[k];else cells[k]=obj;saveCells();}
 
-function yWeekIncome(y,wi){var s=0;cats.forEach(function(c){if(c.kind==="income"){var e=cells[cellKey(y,c.id,wi)];if(e)s+=e.amt;}});return s;}
-function yWeekOut(y,wi,method){var s=0;cats.forEach(function(c){if(c.kind==="expense"){var e=cells[cellKey(y,c.id,wi)];if(e&&e.method===method)s+=e.amt;}});return s;}
+function rowIdsByGroup(){
+ var inc={},out={};
+ cats.forEach(function(c){if(c.kind==="income")inc[c.id]=1;else out[c.id]=1;});
+ bills.forEach(function(b){out[billCatId(b)]=1;});
+ loans.forEach(function(l){out[loanCatId(l)]=1;});
+ return {inc:inc,out:out};
+}
+function yWeekIncome(y,wi){var s=0;var g=rowIdsByGroup();Object.keys(g.inc).forEach(function(id){var e=cells[cellKey(y,id,wi)];if(e)s+=e.amt;});return s;}
+function yWeekOut(y,wi,method){var s=0;var g=rowIdsByGroup();Object.keys(g.out).forEach(function(id){var e=cells[cellKey(y,id,wi)];if(e&&e.method===method)s+=e.amt;});return s;}
 function weekIncome(wi){return yWeekIncome(curYear(),wi);}
 function weekCashOut(wi){return yWeekOut(curYear(),wi,"cash");}
 function weekCardOut(wi){return yWeekOut(curYear(),wi,"card");}
@@ -147,8 +154,20 @@ function runningCashWeek(wi){
  bal-=totalReserved(); // reservations set aside
  return bal;
 }
-function ccBalance(){var s=settings.ccStart||0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++)s+=yWeekOut(y,wi,"card");});return s;}
-function apBalance(){var s=settings.apStart||0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++)s+=yWeekOut(y,wi,"after");});return s;}
+
+function loanCurrentBalance(l){var nm=(l.name||"").toLowerCase();
+ if(nm.indexOf("credit")>=0||nm.indexOf("card")>=0)return ccBalance();
+ if(nm.indexOf("afterpay")>=0)return apBalance();
+ return (l.total||0)-loanPayments(l);
+}
+function loanByMatch(kw){return loans.filter(function(l){return (l.name||"").toLowerCase().indexOf(kw)>=0;})[0];}
+// payments toward a loan = cash/pot logged on that loan's grid row
+function loanPayments(l){var s=0;allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){var e=cells[cellKey(y,loanCatId(l),wi)];if(e&&(e.method==="cash"||e.method==="pot"))s+=e.amt;}});return s;}
+// card spends = 'card' method anywhere EXCEPT on the card loan row (that row is for payments)
+function methodSpendExcludingLoanRow(method,loanRowId){var s=0;var g=rowIdsByGroup();allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){Object.keys(g.out).forEach(function(id){if(id===loanRowId)return;var e=cells[cellKey(y,id,wi)];if(e&&e.method===method)s+=e.amt;});}});return s;}
+
+function ccBalance(){var cc=loanByMatch("credit");var s=settings.ccStart||0;s+=methodSpendExcludingLoanRow("card",cc?loanCatId(cc):null);if(cc)s-=loanPayments(cc);return s;}
+function apBalance(){var ap=loanByMatch("afterpay");var s=settings.apStart||0;s+=methodSpendExcludingLoanRow("after",ap?loanCatId(ap):null);if(ap)s-=loanPayments(ap);return s;}
 
 function h(tag,attrs,kids){var e=document.createElement(tag);
  for(var k in attrs){if(k==="style")e.setAttribute("style",attrs[k]);
@@ -158,7 +177,60 @@ function h(tag,attrs,kids){var e=document.createElement(tag);
  return e;}
 function mcol(m){if(m==="cash")return{bg:C.cashBg,fg:C.cash};if(m==="card")return{bg:C.cardBg,fg:C.card_};if(m==="after")return{bg:C.afterBg,fg:C.after};if(m==="pot")return{bg:C.potBg,fg:C.pot};return{bg:"#fff",fg:C.ink};}
 
-var state={tab:"grid",tagFor:null};
+
+function gridIncome(){return cats.filter(function(c){return c.kind==="income";});}
+function gridFree(){return cats.filter(function(c){return c.kind==="expense";});}
+function billCatId(b){return "bill_"+b.id;}
+function loanCatId(l){return "loan_"+l.id;}
+function gridRows(){
+ var rows=[];
+ gridIncome().forEach(function(c){rows.push({id:c.id,name:c.name,group:"income"});});
+ bills.forEach(function(b){rows.push({id:billCatId(b),name:b.name,group:"bill"});});
+ gridFree().forEach(function(c){rows.push({id:c.id,name:c.name,group:"free"});});
+ loans.forEach(function(l){rows.push({id:loanCatId(l),name:l.name,group:"loan"});});
+ return rows;
+}
+function rowIsIncome(id){return gridIncome().some(function(c){return c.id===id;});}
+
+
+function arrMove(arr,from,to){if(to<0||to>=arr.length)return;var x=arr.splice(from,1)[0];arr.splice(to,0,x);}
+function sortBills(by){
+ if(by==="name")bills.sort(function(a,b){return (a.name||"").localeCompare(b.name||"");});
+ else if(by==="amount")bills.sort(function(a,b){return (b.amount||0)-(a.amount||0);});
+ else if(by==="due")bills.sort(function(a,b){return (a.due||0)-(b.due||0);});
+ saveBills();render();
+}
+function sortLoans(by){
+ if(by==="name")loans.sort(function(a,b){return (a.name||"").localeCompare(b.name||"");});
+ else if(by==="balance")loans.sort(function(a,b){return loanCurrentBalance(b)-loanCurrentBalance(a);});
+ else if(by==="due")loans.sort(function(a,b){return (a.due||0)-(b.due||0);});
+ saveLoans();render();
+}
+function sortPots(by){
+ if(by==="name")pots.sort(function(a,b){return (a.name||"").localeCompare(b.name||"");});
+ else if(by==="reserved")pots.sort(function(a,b){return (b.reserved||0)-(a.reserved||0);});
+ savePots();render();
+}
+function sortCats(by){
+ // only sort expense (free) cats; income stays
+ var exp=cats.filter(function(c){return c.kind==="expense";});
+ var inc=cats.filter(function(c){return c.kind==="income";});
+ if(by==="name")exp.sort(function(a,b){return (a.name||"").localeCompare(b.name||"");});
+ cats=inc.concat(exp);saveCats();render();
+}
+function sortBar(buttons){
+ var bar=h("div",{style:"display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"});
+ bar.appendChild(h("span",{style:"font-size:11px;color:"+C.faint+";font-weight:700;"},["Sort:"]));
+ buttons.forEach(function(b){bar.appendChild(h("button",{style:"font-size:11.5px;border:1px solid "+C.rule+";background:"+C.card+";border-radius:7px;padding:5px 10px;font-weight:600;",onclick:b.fn},[b.label]));});
+ return bar;
+}
+function reorderBtns(arr,idx,saveFn){
+ return h("span",{style:"display:inline-flex;gap:2px;margin-left:6px;"},[
+   h("button",{style:"border:1px solid "+C.rule+";background:#fff;border-radius:5px;width:22px;height:22px;font-size:12px;line-height:1;color:"+(idx===0?C.rule:C.ink)+";",onclick:function(e){e.stopPropagation();arrMove(arr,idx,idx-1);saveFn();render();}},["▲"]),
+   h("button",{style:"border:1px solid "+C.rule+";background:#fff;border-radius:5px;width:22px;height:22px;font-size:12px;line-height:1;color:"+(idx===arr.length-1?C.rule:C.ink)+";",onclick:function(e){e.stopPropagation();arrMove(arr,idx,idx+1);saveFn();render();}},["▼"])]);
+}
+
+var state={tab:"grid",tagFor:null,dashMonth:null,chartSel:null,chartFrom:null,chartTo:null,chartOpen:false,loanOpen:null};
 function closeCellMenu(){var m=document.getElementById("cellmenu");if(m)m.parentNode.removeChild(m);}
 function showCellMenu(x,y,catId,wi,amt){
  closeCellMenu();
@@ -209,11 +281,37 @@ function render(){
 }
 
 /* ============ DASHBOARD ============ */
+function cellMonthKey(year,wi){var d=weekDate(year,wi);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
+function allMonthKeys(){
+ var set={};
+ Object.keys(cells).forEach(function(k){var parts=k.split("|");var y=parseInt(parts[0]);var wi=parseInt(parts[2]);if(!isNaN(y)&&!isNaN(wi))set[cellMonthKey(y,wi)]=1;});
+ var arr=Object.keys(set).sort();
+ if(arr.length===0){var now=new Date();arr=[now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")];}
+ return arr;
+}
+function monthLabel(mk){var p=mk.split("-");var d=new Date(parseInt(p[0]),parseInt(p[1])-1,1);return d.toLocaleDateString(undefined,{month:"long",year:"numeric"});}
+// spending by category for a given month key, returns [{name,total,cash,card,after,pot}]
+function spendByCategoryForMonth(mk){
+ var map={};
+ Object.keys(cells).forEach(function(k){
+   var parts=k.split("|");var y=parseInt(parts[0]);var catId=parts[1];var wi=parseInt(parts[2]);
+   if(isNaN(y)||isNaN(wi))return;
+   if(cellMonthKey(y,wi)!==mk)return;
+   var cat=cats.filter(function(c){return c.id===catId;})[0];
+   if(!cat||cat.kind!=="expense")return;
+   var e=cells[k];if(!e)return;
+   if(!map[catId])map[catId]={name:cat.name,total:0,cash:0,card:0,after:0,pot:0};
+   map[catId].total+=e.amt;map[catId][e.method]=(map[catId][e.method]||0)+e.amt;
+ });
+ return Object.keys(map).map(function(id){return map[id];}).sort(function(a,b){return b.total-a.total;});
+}
+function incomeForMonth(mk){var s=0;Object.keys(cells).forEach(function(k){var p=k.split("|");var y=parseInt(p[0]);var catId=p[1];var wi=parseInt(p[2]);if(isNaN(y)||isNaN(wi))return;if(cellMonthKey(y,wi)!==mk)return;var cat=cats.filter(function(c){return c.id===catId;})[0];if(cat&&cat.kind==="income"&&cells[k])s+=cells[k].amt;});return s;}
+
 function renderDash(wrap){
- wrap.appendChild(h("div",{style:"display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px;"},[
+ wrap.appendChild(sticky(h("div",{style:"display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;"},[
    balCard("Free cash",freeCash(),C.ink),balCard("In pots",totalReserved(),C.pot),
    balCard("Credit card",ccBalance(),C.card_),balCard("Afterpay",apBalance(),C.after)
- ]));
+ ]),0));
  var items=[];
  bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null)items.push({name:b.name,amt:b.amount,du:du});});
  loans.forEach(function(l){var du=daysUntil(l.due);if(du!=null)items.push({name:l.name,amt:l.total,du:du});});
@@ -228,7 +326,121 @@ function renderDash(wrap){
  up.forEach(function(it){box.appendChild(h("div",{style:"display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid "+C.rule+";font-size:13px;"},[
    h("span",{},[it.name+" · "+(it.du===0?"today":it.du+"d")]),h("span",{style:"font-weight:700;"},[money0(it.amt)])]));});
  wrap.appendChild(box);
+
+ // ===== Grouped bar chart: months x-axis, $ y-axis, a bar per selected series =====
+ var months=allMonthKeys();
+ // build the full series list: income (one), each expense category
+ var series=[];
+ cats.forEach(function(c){ series.push({id:c.id,name:c.name,kind:c.kind}); });
+ // default selected: keep state.chartSel (object id->bool); default a few on
+ if(!state.chartSel){state.chartSel={};series.forEach(function(s,i){state.chartSel[s.id]=(i<4);});}
+ if(!state.chartFrom||months.indexOf(state.chartFrom)<0)state.chartFrom=months[0];
+ if(!state.chartTo||months.indexOf(state.chartTo)<0)state.chartTo=months[months.length-1];
+
+ var palette=["#2E7D5B","#C9A227","#2C6FB0","#7A4FB0","#B23A2E","#A9802B","#5B8C5A","#8B5E3C","#3C7A89","#9B4DCA","#D17B0F","#4A7BA6"];
+ function colorFor(idx){return palette[idx%palette.length];}
+
+ // months in range
+ var fi=months.indexOf(state.chartFrom), ti=months.indexOf(state.chartTo);
+ if(fi>ti){var tmp=fi;fi=ti;ti=tmp;}
+ var rangeMonths=months.slice(fi,ti+1);
+
+ // value for a series in a month
+ function seriesValue(s,mk){
+   if(s.kind==="income"){
+     // income for that specific category
+     var tot=0;Object.keys(cells).forEach(function(k){var p=k.split("|");var y=parseInt(p[0]);var cid=p[1];var wi=parseInt(p[2]);if(isNaN(y)||isNaN(wi))return;if(cid!==s.id)return;if(cellMonthKey(y,wi)!==mk)return;if(cells[k])tot+=cells[k].amt;});return tot;
+   } else {
+     var tot=0;Object.keys(cells).forEach(function(k){var p=k.split("|");var y=parseInt(p[0]);var cid=p[1];var wi=parseInt(p[2]);if(isNaN(y)||isNaN(wi))return;if(cid!==s.id)return;if(cellMonthKey(y,wi)!==mk)return;if(cells[k])tot+=cells[k].amt;});return tot;
+   }
+ }
+
+ var selSeries=series.filter(function(s){return state.chartSel[s.id];});
+
+ var chartBox=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:14px 15px;margin-top:14px;"});
+ // controls: from/to
+ var ctrl=h("div",{style:"display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;"});
+ ctrl.appendChild(h("span",{style:"font-size:11px;text-transform:uppercase;color:"+C.faint+";font-weight:700;"},["Compare months"]));
+ function monthSel(val,onch){var sel=h("select",{style:"border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:6px 9px;font-size:12.5px;font-weight:700;"});months.forEach(function(mk){var o=h("option",{value:mk},[monthLabel(mk)]);if(mk===val)o.setAttribute("selected","selected");sel.appendChild(o);});sel.addEventListener("change",function(e){onch(e.target.value);});return sel;}
+ ctrl.appendChild(h("span",{style:"font-size:12px;color:"+C.faint+";"},["From"]));
+ ctrl.appendChild(monthSel(state.chartFrom,function(v){state.chartFrom=v;render();}));
+ ctrl.appendChild(h("span",{style:"font-size:12px;color:"+C.faint+";"},["to"]));
+ ctrl.appendChild(monthSel(state.chartTo,function(v){state.chartTo=v;render();}));
+ chartBox.appendChild(ctrl);
+
+ // multi-select dropdown (collapsible) with search-free checklist
+ var selCount=series.filter(function(s){return state.chartSel[s.id];}).length;
+ var msWrap=h("div",{style:"margin-bottom:14px;position:relative;"});
+ var msBtn=h("button",{style:"width:100%;text-align:left;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:10px 12px;font-size:13px;font-weight:600;display:flex;justify-content:space-between;align-items:center;",
+   onclick:function(){state.chartOpen=!state.chartOpen;render();}},[
+   h("span",{},["Series shown: "+selCount+" of "+series.length]),
+   h("span",{style:"color:"+C.faint+";"},[state.chartOpen?"▲":"▼"])]);
+ msWrap.appendChild(msBtn);
+ if(state.chartOpen){
+   var panel=h("div",{style:"border:1px solid "+C.rule+";background:"+C.card+";border-radius:8px;margin-top:6px;max-height:240px;overflow-y:auto;padding:8px;box-shadow:0 4px 14px rgba(0,0,0,.08);"});
+   // quick all/none
+   panel.appendChild(h("div",{style:"display:flex;gap:8px;margin-bottom:8px;"},[
+     h("button",{style:"font-size:11px;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:6px;padding:5px 10px;font-weight:700;",onclick:function(){series.forEach(function(s){state.chartSel[s.id]=true;});render();}},["Select all"]),
+     h("button",{style:"font-size:11px;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:6px;padding:5px 10px;font-weight:700;",onclick:function(){series.forEach(function(s){state.chartSel[s.id]=false;});render();}},["Clear all"])
+   ]));
+   series.forEach(function(s,idx){
+     var on=!!state.chartSel[s.id];
+     var row=h("label",{style:"display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;padding:6px 6px;border-radius:6px;"+(on?"background:"+C.paper+";":"")});
+     var cb=h("input",{type:"checkbox",style:"accent-color:"+colorFor(idx)+";width:15px;height:15px;"});
+     if(on)cb.setAttribute("checked","checked");
+     cb.addEventListener("change",function(){state.chartSel[s.id]=cb.checked;render();});
+     row.appendChild(cb);
+     row.appendChild(h("span",{style:"width:11px;height:11px;border-radius:2px;background:"+colorFor(idx)+";display:inline-block;flex:none;"},[]));
+     row.appendChild(h("span",{style:"font-weight:"+(s.kind==="income"?"700":"500")+";color:"+(s.kind==="income"?C.green:C.ink)+";"},[s.name+(s.kind==="income"?" (income)":"")]));
+     panel.appendChild(row);
+   });
+   msWrap.appendChild(panel);
+ }
+ chartBox.appendChild(msWrap);
+
+ // chart area (SVG grouped bars)
+ if(selSeries.length===0||rangeMonths.length===0){
+   chartBox.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";"},["Pick at least one category and a month range with data."]));
+ } else {
+   // compute max
+   var maxV=0;rangeMonths.forEach(function(mk){selSeries.forEach(function(s){var v=seriesValue(s,mk);if(v>maxV)maxV=v;});});
+   if(maxV<=0)maxV=1;
+   var W=Math.max(360, rangeMonths.length*Math.max(70, selSeries.length*16+30));
+   var H=240, padL=46, padB=46, padT=10;
+   var plotW=W-padL-10, plotH=H-padT-padB;
+   var ns="http://www.w3.org/2000/svg";
+   var svg=document.createElementNS(ns,"svg");svg.setAttribute("viewBox","0 0 "+W+" "+H);svg.setAttribute("width","100%");svg.setAttribute("style","max-width:"+W+"px;");
+   function svgEl(t,a){var e=document.createElementNS(ns,t);for(var k in a)e.setAttribute(k,a[k]);return e;}
+   // y gridlines (4)
+   for(var g=0;g<=4;g++){var yy=padT+plotH*(g/4);var val=maxV*(1-g/4);
+     svg.appendChild(svgEl("line",{x1:padL,y1:yy,x2:padL+plotW,y2:yy,stroke:C.rule,"stroke-width":1}));
+     var tx=svgEl("text",{x:padL-6,y:yy+3,"text-anchor":"end","font-size":9,fill:C.faint});tx.textContent="$"+Math.round(val);svg.appendChild(tx);
+   }
+   var groupW=plotW/rangeMonths.length;
+   rangeMonths.forEach(function(mk,mi){
+     var gx=padL+groupW*mi;
+     var barAreaW=groupW*0.8; var x0=gx+groupW*0.1;
+     var bw=barAreaW/selSeries.length;
+     selSeries.forEach(function(s,si2){
+       var v=seriesValue(s,mk);var bh=plotH*(v/maxV);
+       var bx=x0+bw*si2; var by=padT+plotH-bh;
+       var idxInAll=series.findIndex(function(z){return z.id===s.id;});
+       svg.appendChild(svgEl("rect",{x:bx+1,y:by,width:Math.max(1,bw-2),height:bh,fill:colorFor(idxInAll),rx:1}));
+     });
+     var mlab=svgEl("text",{x:gx+groupW/2,y:H-padB+16,"text-anchor":"middle","font-size":9.5,fill:C.ink});
+     var p=mk.split("-");mlab.textContent=new Date(parseInt(p[0]),parseInt(p[1])-1,1).toLocaleDateString(undefined,{month:"short",year:"2-digit"});
+     svg.appendChild(mlab);
+   });
+   var scroll=h("div",{style:"overflow-x:auto;-webkit-overflow-scrolling:touch;"});
+   scroll.appendChild(svg);
+   chartBox.appendChild(scroll);
+ }
+ wrap.appendChild(chartBox);
 }
+
+
+function sticky(el,topPx){var cur=el.getAttribute("style")||"";el.setAttribute("style","position:sticky;top:"+(topPx||0)+"px;z-index:20;background:"+C.paper+";padding-top:6px;padding-bottom:8px;"+cur);return el;}
+
 function balCard(label,val,color){return h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:11px 13px;"},[
   h("div",{style:"font-size:11px;color:"+C.faint+";font-weight:600;"},[label]),
   h("div",{style:"font-family:Georgia,serif;font-size:19px;font-weight:700;margin-top:2px;color:"+(val<0?C.red:color)+";"},[money0(val)])]);}
@@ -255,51 +467,50 @@ function renderGrid(wrap){
    legendDot(C.cash,"Cash"),legendDot(C.card_,"Card"),legendDot(C.after,"Afterpay"),legendDot(C.pot,"Pot")]));
 
 
+ wrap.appendChild(sortBar([{label:"Bills by name",fn:function(){sortBills("name");}},{label:"Bills by due",fn:function(){sortBills("due");}},{label:"Loans by name",fn:function(){sortLoans("name");}},{label:"Other A–Z",fn:function(){sortCats("name");}}]));
  var NW=weeksInYear(curYear());
- var box=h("div",{class:"gridwrap",style:"border:1px solid "+C.rule+";border-radius:12px;background:"+C.card+";"});
- var tbl=h("table",{style:"font-size:12px;"});
+ var box=h("div",{class:"gridwrap",style:"border:1px solid "+C.rule+";border-radius:12px;background:"+C.card+";position:relative;"});
+ var tbl=h("table",{style:"font-size:12px;width:auto;"});
  var thr=h("tr",{});
- thr.appendChild(h("th",{style:"position:sticky;left:0;background:"+C.ink+";color:#fff;text-align:left;padding:9px 10px;font-size:11px;min-width:104px;z-index:2;"},["Category"]));
+ thr.appendChild(h("th",{style:"position:sticky;left:0;top:0;background:"+C.ink+";color:#fff;text-align:left;padding:9px 10px;font-size:11px;width:140px;min-width:140px;max-width:140px;z-index:25;"},["Category"]));
  for(var i=0;i<NW;i++){var d=weekDate(curYear(),i);
-   thr.appendChild(h("th",{style:"background:"+C.ink+";color:#fff;padding:6px 6px;font-size:10px;min-width:58px;text-align:center;"},[
+   thr.appendChild(h("th",{style:"position:sticky;top:0;z-index:15;background:"+C.ink+";color:#fff;padding:6px 6px;font-size:10px;min-width:58px;text-align:center;"},[
      h("div",{},["W"+(i+1)]),h("div",{style:"font-weight:400;color:#C9C0B0;font-size:9px;"},[wlabel(d)])]));}
  tbl.appendChild(thr);
- function section(kind,label,color){
-   tbl.appendChild(h("tr",{},[h("td",{style:"position:sticky;left:0;background:"+C.paper+";color:"+color+";font-weight:700;font-size:10px;padding:5px 10px;text-transform:uppercase;z-index:1;",colspan:String(NW+1)},[label])]));
-   cats.filter(function(c){return c.kind===kind;}).forEach(function(c){
+ function sectionRows(groupKey,label,color,rowList){
+   tbl.appendChild(h("tr",{},[h("td",{style:"background:"+C.paper+";padding:0;",colspan:String(NW+1)},[h("div",{style:"position:sticky;left:0;display:inline-block;color:"+color+";font-weight:700;font-size:10px;padding:5px 10px;text-transform:uppercase;"},[label])])]));
+   rowList.forEach(function(rowinfo){
+     var rid=rowinfo.id, rincome=(rowinfo.group==="income");
      var tr=h("tr",{});
-     tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.card+";padding:5px 10px;font-weight:600;border-top:1px solid "+C.rule+";z-index:1;font-size:11.5px;"},[
-       h("span",{},[c.name]),h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:9.5px;margin-left:4px;text-decoration:underline;",onclick:function(){renameCat(c);}},["·"])]));
+     tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.card+";padding:5px 10px;font-weight:600;border-top:1px solid "+C.rule+";border-right:1px solid "+C.rule+";z-index:3;font-size:11.5px;width:140px;min-width:140px;max-width:140px;"},[
+       h("span",{},[rowinfo.name])]));
      for(var wi=0;wi<NW;wi++){(function(wi){
-       var e=getCell(c.id,wi);var col=e?mcol(e.method):{bg:"#fff",fg:C.ink};
+       var e=getCell(rid,wi);var col=e?mcol(e.method):{bg:"#fff",fg:C.ink};
        var td=h("td",{style:"border-top:1px solid "+C.rule+";border-left:1px solid "+C.rule+";padding:0;background:"+col.bg+";"});
        var inp=h("input",{class:"cellinp",inputmode:"decimal",value:e?money0(e.amt):"",style:"color:"+col.fg+";"});
        inp.addEventListener("change",function(ev){
          var v=parseFloat(String(ev.target.value).replace(/[^0-9.]/g,""));
-         if(isNaN(v)||v<=0){setCell(c.id,wi,null);render();return;}
-         var prev=getCell(c.id,wi);
-         if(c.kind==="income"){setCell(c.id,wi,{amt:+v.toFixed(2),method:"cash"});render();return;}
-         // keep previous method if it had one; else default cash, then let them right-click to change colour
+         if(isNaN(v)||v<=0){setCell(rid,wi,null);render();return;}
+         var prev=getCell(rid,wi);
+         if(rincome){setCell(rid,wi,{amt:+v.toFixed(2),method:"cash"});render();return;}
          var meth=prev?prev.method:"cash"; var pid=prev?prev.potId:null;
-         if(meth==="pot"&&pid){ setCell(c.id,wi,{amt:+v.toFixed(2),method:"pot",potId:pid}); }
-         else setCell(c.id,wi,{amt:+v.toFixed(2),method:meth});
+         if(meth==="pot"&&pid){setCell(rid,wi,{amt:+v.toFixed(2),method:"pot",potId:pid});}
+         else setCell(rid,wi,{amt:+v.toFixed(2),method:meth});
          render();
        });
-       // right click opens an inline colour picker positioned at the cell
-       td.addEventListener("contextmenu",function(ev){ev.preventDefault();
-         var cur=getCell(c.id,wi); var amt=cur?cur.amt:0;
-         showCellMenu(ev.clientX,ev.clientY,c.id,wi,amt);
-       });
-       td.appendChild(inp);
-       tr.appendChild(td);
+       td.addEventListener("contextmenu",function(ev){ev.preventDefault();var cur=getCell(rid,wi);showCellMenu(ev.clientX,ev.clientY,rid,wi,cur?cur.amt:0);});
+       td.appendChild(inp);tr.appendChild(td);
      })(wi);}
      tbl.appendChild(tr);
    });
  }
- section("income","Income",C.green);
- section("expense","Expenses",C.red);
+ var allRows=gridRows();
+ sectionRows("income","Income",C.green,allRows.filter(function(r){return r.group==="income";}));
+ sectionRows("bill","Bills",C.red,allRows.filter(function(r){return r.group==="bill";}));
+ sectionRows("free","Other spending",C.amber,allRows.filter(function(r){return r.group==="free";}));
+ sectionRows("loan","Loans & cards",C.pot,allRows.filter(function(r){return r.group==="loan";}));
  function totRow(label,fn,color,bold){var tr=h("tr",{});
-   tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.paper+";padding:6px 10px;font-weight:"+(bold?"700":"600")+";font-size:10.5px;color:"+color+";border-top:2px solid "+C.rule+";z-index:1;"},[label]));
+   tr.appendChild(h("td",{style:"position:sticky;left:0;background:"+C.paper+";padding:6px 10px;font-weight:"+(bold?"700":"600")+";font-size:10.5px;color:"+color+";border-top:2px solid "+C.rule+";border-right:1px solid "+C.rule+";z-index:3;width:120px;min-width:120px;max-width:120px;"},[label]));
    for(var wi=0;wi<NW;wi++){var v=fn(wi);tr.appendChild(h("td",{style:"text-align:center;padding:6px 3px;font-weight:700;font-size:10.5px;color:"+color+";border-top:2px solid "+C.rule+";"},[v?money0(v):"–"]));}
    tbl.appendChild(tr);}
  totRow("Income",weekIncome,C.green,true);
@@ -350,23 +561,24 @@ function editSettings(){var o=prompt("Opening cash ($):",String(settings.opening
 function renderBills(wrap){
  var totalM=bills.reduce(function(s,b){return s+monthlyEq(b.amount,b.freq);},0);
  wrap.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";margin-bottom:10px;"},["Total ~"+money0(totalM)+"/month. Tap any field to edit."]));
+ wrap.appendChild(sortBar([{label:"Name",fn:function(){sortBills("name");}},{label:"Amount",fn:function(){sortBills("amount");}},{label:"Due date",fn:function(){sortBills("due");}}]));
  var box=h("div",{class:"gridwrap",style:"border:1px solid "+C.rule+";border-radius:10px;background:"+C.card+";"});
  var tbl=h("table",{style:"width:100%;font-size:12.5px;"});
- var hdr=h("tr",{});["Bill","Amount","Term","Due","Note",""].forEach(function(hh){hdr.appendChild(h("th",{style:"background:"+C.ink+";color:#fff;padding:7px 8px;text-align:left;font-size:11px;"},[hh]));});
+ var hdr=h("tr",{});["Bill","Amount","Term","Due","Note",""].forEach(function(hh){hdr.appendChild(h("th",{style:"position:sticky;top:0;z-index:10;background:"+C.ink+";color:#fff;padding:7px 8px;text-align:left;font-size:11px;"},[hh]));});
  tbl.appendChild(hdr);
- bills.forEach(function(b){tbl.appendChild(billRow(b));});
+ bills.forEach(function(b,bi){tbl.appendChild(billRow(b,bi));});
  box.appendChild(tbl);wrap.appendChild(box);
  wrap.appendChild(h("button",{style:"width:100%;border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:10px;padding:12px;font-size:13px;font-weight:600;margin-top:10px;",
    onclick:function(){bills.push({id:uid(),name:"New bill",amount:0,freq:"Monthly",due:1,note:""});saveBills();render();}},["+ Add a bill"]));
 }
-function billRow(b){
+function billRow(b,bi){
  var tr=h("tr",{});
  function ed(val,fmt,setter,wid){var inp=h("input",{value:val,style:"width:"+(wid||"100%")+";border:1px solid transparent;background:transparent;padding:6px 6px;font-size:12.5px;color:"+C.ink+";border-radius:5px;"});
    inp.addEventListener("focus",function(){inp.style.border="1px solid "+C.rule;inp.style.background="#fff";});
    inp.addEventListener("change",function(e){setter(e.target.value);saveBills();render();});
    inp.addEventListener("blur",function(){inp.style.border="1px solid transparent";inp.style.background="transparent";});
    var td=h("td",{style:"border-top:1px solid "+C.rule+";padding:0;"});td.appendChild(inp);return td;}
- tr.appendChild(ed(b.name,null,function(v){b.name=v;}));
+ var nameTd=ed(b.name,null,function(v){b.name=v;});nameTd.appendChild(reorderBtns(bills,bi,saveBills));tr.appendChild(nameTd);
  tr.appendChild(ed(money0(b.amount),null,function(v){b.amount=parseFloat(String(v).replace(/[^0-9.]/g,""))||0;}));
  // term as select
  var tsel=h("select",{style:"border:1px solid transparent;background:transparent;padding:6px;font-size:12px;"});
@@ -379,50 +591,100 @@ function billRow(b){
  tr.appendChild(del);return tr;
 }
 
-/* ============ LOANS (table) ============ */
+/* ============ LOANS — amortisation ============ */
 function renderLoans(wrap){
- var owed=loans.reduce(function(s,l){return s+(l.total||0);},0);
- wrap.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";margin-bottom:10px;"},["Total balances "+money0(owed)+". Pay these via the weekly tracker (card/afterpay/cash)."]));
- var box=h("div",{class:"gridwrap",style:"border:1px solid "+C.rule+";border-radius:10px;background:"+C.card+";"});
- var tbl=h("table",{style:"width:100%;font-size:12.5px;"});
- var hdr=h("tr",{});["Loan / Card","Balance","Term","Due","Note",""].forEach(function(hh){hdr.appendChild(h("th",{style:"background:"+C.ink+";color:#fff;padding:7px 8px;text-align:left;font-size:11px;"},[hh]));});
- tbl.appendChild(hdr);
- loans.forEach(function(l){tbl.appendChild(loanRow(l));});
- box.appendChild(tbl);wrap.appendChild(box);
- wrap.appendChild(h("button",{style:"width:100%;border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:10px;padding:12px;font-size:13px;font-weight:600;margin-top:10px;",
+ if(!state.loanOpen)state.loanOpen={};
+ var totalOwed=loans.reduce(function(s,l){return s+Math.max(0,loanCurrentBalance(l));},0);
+ wrap.appendChild(sticky(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:13px 15px;margin-bottom:14px;"},[
+   h("div",{style:"font-size:11px;color:"+C.faint+";font-weight:600;"},["Total still owed (live)"]),
+   h("div",{style:"font-family:Georgia,serif;font-size:22px;font-weight:700;"},[money(totalOwed)]),
+   h("div",{style:"font-size:11.5px;color:"+C.faint+";margin-top:3px;"},["Log payments (and card/afterpay spends) in the Weekly tab. Tap a loan to see its schedule."])]),0));
+ wrap.appendChild(sortBar([{label:"Name",fn:function(){sortLoans("name");}},{label:"Balance",fn:function(){sortLoans("balance");}},{label:"Due date",fn:function(){sortLoans("due");}}]));
+ loans.forEach(function(l,li){
+   var nm=(l.name||"").toLowerCase();
+   var isCard=nm.indexOf("credit")>=0||nm.indexOf("card")>=0;
+   var isAfter=nm.indexOf("afterpay")>=0;
+   var opening=isCard?(settings.ccStart||0):isAfter?(settings.apStart||0):(l.total||0);
+   var bal=loanCurrentBalance(l);
+   var pays=loanPayments(l);
+   var spends=isCard?methodSpendExcludingLoanRow("card",loanCatId(l)):isAfter?methodSpendExcludingLoanRow("after",loanCatId(l)):0;
+   var open=!!state.loanOpen[l.id];
+   var head=h("div",{style:"display:flex;justify-content:space-between;align-items:center;cursor:pointer;",onclick:function(){state.loanOpen[l.id]=!open;render();}},[
+     h("div",{style:"display:flex;align-items:center;"},[h("span",{style:"font-size:15px;font-weight:700;"},[l.name]),reorderBtns(loans,li,saveLoans),h("span",{style:"font-size:11px;color:"+C.faint+";margin-left:7px;"},[(isCard||isAfter)?"card/spend":l.freq+" · due "+l.due])]),
+     h("div",{style:"display:flex;align-items:center;gap:9px;"},[h("span",{style:"font-size:16px;font-weight:700;color:"+(bal<=0?C.green:C.ink)+";"},[bal<=0?"CLEARED ✓":money(bal)]),h("span",{style:"color:"+C.faint+";font-size:13px;"},[open?"▲":"▼"])])
+   ]);
+   var card=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:11px;padding:12px 14px;margin-bottom:9px;"},[head]);
+   if(open){
+     var sched=h("div",{style:"margin-top:11px;border-top:1px solid "+C.rule+";padding-top:10px;"});
+     // summary line
+     sched.appendChild(amLine("Opening balance",opening,C.faint));
+     if(isCard||isAfter)sched.appendChild(amLine("+ Spends logged",spends,C.red));
+     sched.appendChild(amLine("− Payments made",-pays,C.green));
+     sched.appendChild(amLine("= Current balance",bal,bal<=0?C.green:C.ink,true));
+     // per-week schedule (only weeks with activity on this loan)
+     var rows=[];
+     allYears().forEach(function(y){for(var wi=0;wi<weeksInYear(y);wi++){
+       var e=cells[cellKey(y,loanCatId(l),wi)];
+       if(e){rows.push({y:y,wi:wi,date:weekDate(y,wi),amt:e.amt,method:e.method});}
+     }});
+     if(rows.length){
+       var tbl=h("div",{style:"margin-top:11px;"});
+       tbl.appendChild(h("div",{style:"font-size:10.5px;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:6px;"},["Payment history"]));
+       var run=opening; if(isCard||isAfter)run+=spends; // start from opening(+spends) then subtract chronologically
+       // sort by date
+       rows.sort(function(a,b){return a.date-b.date;});
+       rows.forEach(function(r){
+         var isPay=(r.method==="cash"||r.method==="pot");
+         if(isPay)run-=r.amt;
+         tbl.appendChild(h("div",{style:"display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-top:1px solid "+C.rule+";"},[
+           h("span",{style:"color:"+C.faint+";"},["W"+(r.wi+1)+" · "+r.date.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"2-digit"})]),
+           h("span",{style:"color:"+(isPay?C.green:C.red)+";font-weight:600;"},[(isPay?"− ":"+ ")+money0(r.amt)+" "+(r.method==="cash"?"cash":r.method==="pot"?"pot":r.method)]),
+           h("span",{style:"font-weight:700;"},[money0(run)])
+         ]));
+       });
+       sched.appendChild(tbl);
+     } else {
+       sched.appendChild(h("div",{style:"font-size:12px;color:"+C.faint+";margin-top:9px;"},["No payments logged yet. Log them on the Weekly tab under '"+l.name+"'."]));
+     }
+     // edit/remove
+     sched.appendChild(h("div",{style:"display:flex;gap:12px;margin-top:11px;"},[
+       h("button",{style:"border:none;background:none;color:"+C.faint+";font-size:11.5px;text-decoration:underline;",onclick:function(){editLoanInline(l);}},["edit details"]),
+       h("button",{style:"border:none;background:none;color:"+C.red+";font-size:11.5px;text-decoration:underline;",onclick:function(){if(confirm("Remove "+l.name+"?")){loans=loans.filter(function(x){return x.id!==l.id;});saveLoans();render();}}},["remove"])
+     ]));
+     card.appendChild(sched);
+   }
+   wrap.appendChild(card);
+ });
+ wrap.appendChild(h("button",{style:"width:100%;border:1.5px dashed "+C.rule+";background:none;color:"+C.faint+";border-radius:11px;padding:13px;font-size:14px;font-weight:600;margin-top:4px;",
    onclick:function(){loans.push({id:uid(),name:"New loan",total:0,freq:"Monthly",due:1,note:""});saveLoans();render();}},["+ Add a loan / card"]));
 }
-function loanRow(l){
- var tr=h("tr",{});
- function ed(val,setter,wid){var inp=h("input",{value:val,style:"width:"+(wid||"100%")+";border:1px solid transparent;background:transparent;padding:6px 6px;font-size:12.5px;color:"+C.ink+";border-radius:5px;"});
-   inp.addEventListener("focus",function(){inp.style.border="1px solid "+C.rule;inp.style.background="#fff";});
-   inp.addEventListener("change",function(e){setter(e.target.value);saveLoans();render();});
-   inp.addEventListener("blur",function(){inp.style.border="1px solid transparent";inp.style.background="transparent";});
-   var td=h("td",{style:"border-top:1px solid "+C.rule+";padding:0;"});td.appendChild(inp);return td;}
- tr.appendChild(ed(l.name,function(v){l.name=v;}));
- tr.appendChild(ed(money0(l.total),function(v){l.total=parseFloat(String(v).replace(/[^0-9.]/g,""))||0;}));
- var tsel=h("select",{style:"border:1px solid transparent;background:transparent;padding:6px;font-size:12px;"});
- ["Weekly","Fortnightly","Monthly","Quarterly","Annually"].forEach(function(f){var o=h("option",{value:f},[f]);if(f===l.freq)o.setAttribute("selected","selected");tsel.appendChild(o);});
- tsel.addEventListener("change",function(e){l.freq=e.target.value;saveLoans();render();});
- var tdT=h("td",{style:"border-top:1px solid "+C.rule+";padding:0;"});tdT.appendChild(tsel);tr.appendChild(tdT);
- tr.appendChild(ed(String(l.due),function(v){l.due=parseInt(v)||1;},"44px"));
- tr.appendChild(ed(l.note||"",function(v){l.note=v;}));
- tr.appendChild(h("td",{style:"border-top:1px solid "+C.rule+";padding:0 6px;text-align:center;"},[h("button",{style:"border:none;background:none;color:"+C.red+";font-size:14px;",onclick:function(){if(confirm("Remove "+l.name+"?")){loans=loans.filter(function(x){return x.id!==l.id;});saveLoans();render();}}},["×"])]));
- return tr;
+function amLine(label,val,color,bold){return h("div",{style:"display:flex;justify-content:space-between;font-size:13px;padding:3px 0;"+(bold?"border-top:1px solid "+C.rule+";margin-top:4px;padding-top:7px;":""),},[
+  h("span",{style:"font-weight:"+(bold?"700":"500")+";"},[label]),h("span",{style:"font-weight:700;color:"+color+";"},[money(Math.abs(val))])]);}
+function editLoanInline(l){
+ var name=prompt("Name:",l.name);if(name===null)return;
+ var nm=name.toLowerCase();
+ if(nm.indexOf("credit")>=0||nm.indexOf("card")>=0){var o=prompt("Opening credit card balance ($):",String(settings.ccStart||0));if(o!==null){settings.ccStart=parseFloat(o)||0;saveSettings();}}
+ else if(nm.indexOf("afterpay")>=0){var o2=prompt("Opening Afterpay balance ($):",String(settings.apStart||0));if(o2!==null){settings.apStart=parseFloat(o2)||0;saveSettings();}}
+ else {var t=prompt("Total owed ($):",String(l.total));if(t!==null)l.total=parseFloat(t)||0;}
+ l.name=name.trim();
+ var freq=prompt("Term:",l.freq||"Monthly");if(freq!==null)l.freq=freq.trim();
+ var due=prompt("Due day (1-31):",String(l.due||1));if(due!==null)l.due=parseInt(due)||1;
+ saveLoans();render();
 }
 
 /* ============ POTS ============ */
 function renderPots(wrap){
- wrap.appendChild(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:13px 15px;margin-bottom:14px;"},[
+ wrap.appendChild(sticky(h("div",{style:"background:"+C.card+";border:1.5px solid "+C.rule+";border-radius:12px;padding:13px 15px;margin-bottom:14px;"},[
    h("div",{style:"display:flex;justify-content:space-between;"},[
      h("div",{},[h("div",{style:"font-size:11px;color:"+C.faint+";font-weight:600;"},["Total reserved in pots"]),h("div",{style:"font-family:Georgia,serif;font-size:22px;font-weight:700;color:"+C.pot+";"},[money(totalReserved())])]),
-     h("div",{style:"text-align:right;"},[h("div",{style:"font-size:11px;color:"+C.faint+";font-weight:600;"},["Free cash left"]),h("div",{style:"font-size:15px;font-weight:700;margin-top:4px;color:"+(freeCash()<0?C.red:C.ink)+";"},[money(freeCash())])])])]));
+     h("div",{style:"text-align:right;"},[h("div",{style:"font-size:11px;color:"+C.faint+";font-weight:600;"},["Free cash left"]),h("div",{style:"font-size:15px;font-weight:700;margin-top:4px;color:"+(freeCash()<0?C.red:C.ink)+";"},[money(freeCash())])])])]),0));
  wrap.appendChild(h("div",{style:"font-size:12px;color:"+C.faint+";margin-bottom:10px;"},["Reserving moves money from free cash into a pot. Paying from a pot (in the weekly tracker) reduces it."]));
- pots.forEach(function(p){
+ wrap.appendChild(sortBar([{label:"Name",fn:function(){sortPots("name");}},{label:"Reserved",fn:function(){sortPots("reserved");}}]));
+ pots.forEach(function(p,pi){
    var addInp=h("input",{inputmode:"decimal",placeholder:"reserve $",style:"flex:1;border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:8px 10px 8px 20px;font-weight:700;font-size:13px;color:"+C.ink+";"});
    wrap.appendChild(h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:11px;padding:12px 14px;margin-bottom:9px;"},[
      h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;"},[
-       h("span",{style:"font-size:15px;font-weight:700;"},[p.name]),
+       h("div",{style:"display:flex;align-items:center;"},[h("span",{style:"font-size:15px;font-weight:700;"},[p.name]),reorderBtns(pots,pi,savePots)]),
        h("span",{style:"font-size:16px;font-weight:700;color:"+C.pot+";"},[money(p.reserved||0)])]),
      h("div",{style:"display:flex;gap:7px;margin-top:9px;"},[
        h("div",{style:"position:relative;flex:1;"},[h("span",{style:"position:absolute;left:8px;top:50%;transform:translateY(-50%);color:"+C.faint+";font-size:13px;"},["$"]),addInp]),
