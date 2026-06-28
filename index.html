@@ -230,7 +230,7 @@ function reorderBtns(arr,idx,saveFn){
    h("button",{style:"border:1px solid "+C.rule+";background:#fff;border-radius:5px;width:22px;height:22px;font-size:12px;line-height:1;color:"+(idx===arr.length-1?C.rule:C.ink)+";",onclick:function(e){e.stopPropagation();arrMove(arr,idx,idx+1);saveFn();render();}},["▼"])]);
 }
 
-var state={tab:"grid",tagFor:null,dashMonth:null,chartSel:null,chartFrom:null,chartTo:null,chartOpen:false,loanOpen:null};
+var state={tab:"grid",tagFor:null,dashMonth:null,chartSel:null,chartFrom:null,chartTo:null,chartOpen:false,loanOpen:null,dueWin:7};
 function closeCellMenu(){var m=document.getElementById("cellmenu");if(m)m.parentNode.removeChild(m);}
 function showCellMenu(x,y,catId,wi,amt){
  closeCellMenu();
@@ -316,16 +316,26 @@ function renderDash(wrap){
  bills.forEach(function(b){var du=daysUntil(b.due);if(du!=null)items.push({name:b.name,amt:b.amount,du:du});});
  loans.forEach(function(l){var du=daysUntil(l.due);if(du!=null)items.push({name:l.name,amt:l.total,du:du});});
  function within(n){var s=0;items.forEach(function(it){if(it.du>=0&&it.du<=n)s+=it.amt;});return s;}
- wrap.appendChild(dueRow("⏰ Due next 7 days",within(7),C.red));
- wrap.appendChild(dueRow("📅 Due next 14 days",within(14),C.amber));
+ var windows=[{d:7,label:"7 days"},{d:14,label:"14 days"},{d:21,label:"21 days"},{d:30,label:"30 days"},{d:60,label:"2 months"},{d:90,label:"3 months"}];
+ if(!state.dueWin)state.dueWin=7;
+ // dropdown + total
+ var dueHead=h("div",{style:"display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px;"});
+ dueHead.appendChild(h("div",{style:"font-size:13px;font-weight:700;color:"+C.red+";"},["⏰ Due within"]));
+ var dsel=h("select",{style:"border:1px solid "+C.rule+";background:"+C.paper+";border-radius:8px;padding:7px 11px;font-size:13px;font-weight:700;"});
+ windows.forEach(function(w){var o=h("option",{value:String(w.d)},[w.label]);if(w.d===state.dueWin)o.setAttribute("selected","selected");dsel.appendChild(o);});
+ dsel.addEventListener("change",function(e){state.dueWin=parseInt(e.target.value);render();});
+ dueHead.appendChild(dsel);
+ dueHead.appendChild(h("span",{style:"flex:1;text-align:right;font-family:Georgia,serif;font-size:20px;font-weight:700;color:"+C.red+";"},[money0(within(state.dueWin))]));
+ var dueBox=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:13px 15px;margin-bottom:5px;"});
+ dueBox.appendChild(dueHead);
  items.sort(function(a,b){return a.du-b.du;});
- var up=items.filter(function(it){return it.du>=0&&it.du<=14;});
- var box=h("div",{style:"background:"+C.card+";border:1px solid "+C.rule+";border-radius:12px;padding:13px 15px;margin-top:5px;"});
- box.appendChild(h("div",{style:"font-size:11px;text-transform:uppercase;color:"+C.faint+";font-weight:700;margin-bottom:9px;"},["Coming up (14 days)"]));
- if(!up.length)box.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";"},["Nothing due in 14 days."]));
- up.forEach(function(it){box.appendChild(h("div",{style:"display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid "+C.rule+";font-size:13px;"},[
-   h("span",{},[it.name+" · "+(it.du===0?"today":it.du+"d")]),h("span",{style:"font-weight:700;"},[money0(it.amt)])]));});
- wrap.appendChild(box);
+ var up=items.filter(function(it){return it.du>=0&&it.du<=state.dueWin;});
+ if(!up.length)dueBox.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";"},["Nothing due in that window."]));
+ up.forEach(function(it){
+   var when=it.du===0?"today":it.du===1?"tomorrow":it.du+" days";
+   dueBox.appendChild(h("div",{style:"display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid "+C.rule+";font-size:13px;"},[
+     h("span",{},[it.name+" · "+when]),h("span",{style:"font-weight:700;"},[money0(it.amt)])]));});
+ wrap.appendChild(dueBox);
 
  // ===== Grouped bar chart: months x-axis, $ y-axis, a bar per selected series =====
  var months=allMonthKeys();
