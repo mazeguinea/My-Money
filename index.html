@@ -115,7 +115,7 @@ function weeklyEq(amt,freq){amt=amt||0;return freq==="Weekly"?amt:freq==="Fortni
 
 
 function parseISO(s){if(!s)return null;var p=String(s).split("-");if(p.length<3)return null;return new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));}
-function billDaysUntil(b){var now=new Date();now.setHours(0,0,0,0);for(var off=0;off<400;off++){var d=new Date(now);d.setDate(d.getDate()+off);if(!billOccursInMonth(b,d.getFullYear(),d.getMonth()))continue;if(d.getDate()===b.due)return off;if(b.freq==="Fortnightly"&&d.getDate()===(b.due2||30))return off;if(b.freq==="Weekly")return off;}return null;}
+function billDaysUntil(b){if(b.freq==="Weekly")return 0;var now=new Date();now.setHours(0,0,0,0);for(var off=0;off<400;off++){var d=new Date(now);d.setDate(d.getDate()+off);if(!billOccursInMonth(b,d.getFullYear(),d.getMonth()))continue;if(d.getDate()===b.due)return off;if(b.freq==="Fortnightly"&&d.getDate()===(b.due2||30))return off;}return null;}
 function dateDaysUntil(s){var d=parseISO(s);if(!d)return null;d.setHours(0,0,0,0);return Math.round((d-new Date().setHours(0,0,0,0))/86400000);}
 
 function nextDue(day){if(!day||day<1)return null;var now=new Date();now.setHours(0,0,0,0);for(var a=0;a<70;a++){var d=new Date(now);d.setDate(d.getDate()+a);if(d.getDate()===day)return d;}return null;}
@@ -382,10 +382,15 @@ function occurrencesInRange(day,day2,d0,d1){
 }
 function dueInDayRange(d0,d1){
  var s=0;var now=new Date();now.setHours(0,0,0,0);
+ var spanDays=(d1-d0)+1;
+ var weeksInSpan=Math.max(1,Math.round(spanDays/7));
  bills.forEach(function(b){
+   if(b.freq==="Weekly"){
+     // weekly bill: full weekly amount per 7-day block in the window
+     s+=b.amount*weeksInSpan; return;
+   }
    for(var off=d0;off<=d1;off++){var d=new Date(now);d.setDate(d.getDate()+off);
      if(!billOccursInMonth(b,d.getFullYear(),d.getMonth()))continue;
-     if(b.freq==="Weekly"){ if(((d-now)/86400000)%7===0||off===d0) {/*weekly: count once per 7d handled below*/} }
      if(d.getDate()===b.due)s+=b.amount;
      else if(b.freq==="Fortnightly"&&d.getDate()===(b.due2||30))s+=b.amount;
    }
@@ -401,6 +406,28 @@ function healthFor(d0,d1,useCashNow){
  var status= spare>=200?"healthy": spare>=0?"tight":"short";
  return {spare:spare,income:income,due:due,cash:cash,status:status};
 }
+
+
+function renderDueReminders(wrap){
+ var now=new Date();now.setHours(0,0,0,0);
+ var rems=[];
+ bills.forEach(function(b){var dd=billReminderDays(b);if(dd!=null&&dd<=14)rems.push({name:b.name,days:dd,amt:(b.reminderFreq?(b.reminderFreq==="Monthly"?b.amount*52/12:b.reminderFreq==="Quarterly"?b.amount*52/4:b.reminderFreq==="Annually"?b.amount*52:b.amount):b.amount)});});
+ loans.forEach(function(l){(l.plans||[]).forEach(function(pp){var du=dateDaysUntil(pp.date);if(du!=null&&du>=0&&du<=14)rems.push({name:l.name+" payment",days:du,amt:pp.amt});});});
+ rems.sort(function(a,b){return a.days-b.days;});
+ if(!rems.length)return;
+ var box=h("div",{style:"background:#FFF7E8;border:1.5px solid "+C.amber+";border-radius:12px;padding:12px 15px;margin-bottom:14px;"});
+ box.appendChild(h("div",{style:"font-size:11px;letter-spacing:.08em;font-weight:800;color:"+C.amber+";margin-bottom:6px;"},["🔔 PAYMENT DUE-DATE REMINDERS (next 14 days)"]));
+ rems.forEach(function(r){
+   var when=r.days===0?"due today":r.days===1?"due tomorrow":"due in "+r.days+" days";
+   box.appendChild(h("div",{style:"display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid #EADFC4;font-size:13px;"},[
+     h("span",{style:"font-weight:600;"},[r.name+" · "+when]),
+     h("span",{style:"font-weight:700;color:"+C.amber+";"},[money0(r.amt)])
+   ]));
+ });
+ box.appendChild(h("div",{style:"font-size:10.5px;color:"+C.faint+";margin-top:7px;font-style:italic;"},["These are calendar due dates — make sure the pot has enough set aside before each one."]));
+ wrap.appendChild(box);
+}
+
 function renderHealthBanner(wrap){
  var ew=daysToEndOfWeek();
  var thisWeek=healthFor(0,ew,true);
@@ -427,8 +454,9 @@ function renderDash(wrap){
    balCard("Credit card",ccBalance(),C.card_),balCard("Afterpay",apBalance(),C.after)
  ]),0));
  renderHealthBanner(wrap);
+ renderDueReminders(wrap);
  var items=[];
- bills.forEach(function(b){var du=billDaysUntil(b);if(du!=null)items.push({name:b.name,amt:b.amount,du:du});});
+ bills.forEach(function(b){var du=billDaysUntil(b);if(du!=null)items.push({name:b.name,amt:b.amount,du:du,weekly:(b.freq==="Weekly")});});
  // loans contribute PLANNED PAYMENTS (not balances)
  loans.forEach(function(l){(l.plans||[]).forEach(function(pp){var du=dateDaysUntil(pp.date);if(du!=null&&du>=0)items.push({name:l.name+" payment",amt:pp.amt,du:du});});});
  function within(n){var s=0;items.forEach(function(it){if(it.du>=0&&it.du<=n)s+=it.amt;});return s;}
@@ -448,7 +476,7 @@ function renderDash(wrap){
  var up=items.filter(function(it){return it.du>=0&&it.du<=state.dueWin;});
  if(!up.length)dueBox.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";"},["Nothing due in that window."]));
  up.forEach(function(it){
-   var when=it.du===0?"today":it.du===1?"tomorrow":it.du+" days";
+   var when=it.weekly?"weekly":it.du===0?"today":it.du===1?"tomorrow":it.du+" days";
    dueBox.appendChild(h("div",{style:"display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid "+C.rule+";font-size:13px;"},[
      h("span",{},[it.name+" · "+when]),h("span",{style:"font-weight:700;"},[money0(it.amt)])]));});
  wrap.appendChild(dueBox);
@@ -713,10 +741,44 @@ function reserveWeekForBill(b){
  p.reserved=(p.reserved||0)+amt;savePots();render();
 }
 
+
+
+function makeAllWeekly(){
+ if(!confirm("Convert ALL bills to weekly?\n\nEach bill's amount becomes its weekly set-aside, and its original due date is kept for reminders."))return;
+ bills.forEach(function(b){
+   if(b.freq!=="Weekly"){
+     b.reminderDue=b.due;               // keep original calendar due-day
+     b.reminderFreq=b.freq;             // keep original cadence (Monthly/Quarterly/etc)
+     b.amount=+weeklyEq(b.amount,b.freq).toFixed(2); // weekly set-aside figure
+     b.freq="Weekly";
+   }
+ });
+ saveBills();render();
+}
+// reminders: upcoming actual calendar due dates (from reminderDue/reminderFreq, or due/freq if not converted)
+function billReminderDays(b){
+ var dd=b.reminderDue||b.due; var rf=b.reminderFreq||b.freq;
+ if(!dd)return null;
+ var now=new Date();now.setHours(0,0,0,0);
+ for(var off=0;off<400;off++){var d=new Date(now);d.setDate(d.getDate()+off);
+   // month cadence check for quarterly/annual using a temp obj
+   var occurs=true;
+   if(rf==="Quarterly"||rf==="Annually"){
+     var am=(b.anchorMonth!=null)?b.anchorMonth:null;
+     if(am==null){for(var o2=0;o2<366;o2++){var dx=new Date(now);dx.setDate(dx.getDate()+o2);if(dx.getDate()===dd){am=dx.getMonth();break;}}}
+     if(rf==="Quarterly")occurs=(((d.getMonth()-am)%3+3)%3===0);
+     else occurs=(d.getMonth()===am);
+   }
+   if(occurs && d.getDate()===dd) return off;
+ }
+ return null;
+}
+
 /* ============ BILLS (table) ============ */
 function renderBills(wrap){
  var totalM=bills.reduce(function(s,b){return s+monthlyEq(b.amount,b.freq);},0);
  wrap.appendChild(h("div",{style:"font-size:12.5px;color:"+C.faint+";margin-bottom:10px;"},["Total ~"+money0(totalM)+"/month. Tap any field to edit."]));
+ wrap.appendChild(h("button",{style:"border:none;background:"+C.ink+";color:#fff;border-radius:9px;padding:10px 14px;font-size:13px;font-weight:700;margin-bottom:12px;",onclick:function(){makeAllWeekly();}},["⚡ Make all bills weekly"]));
  wrap.appendChild(sortBar([{label:"Name",fn:function(){sortBills("name");}},{label:"Amount",fn:function(){sortBills("amount");}},{label:"Due date",fn:function(){sortBills("due");}}]));
  var box=h("div",{class:"gridwrap",style:"border:1px solid "+C.rule+";border-radius:10px;background:"+C.card+";"});
  var tbl=h("table",{style:"width:100%;font-size:12.5px;"});
