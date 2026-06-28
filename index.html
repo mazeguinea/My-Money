@@ -137,6 +137,26 @@ function yWeekIncome(y,wi){var s=0;var g=rowIdsByGroup();Object.keys(g.inc).forE
 function yWeekOut(y,wi,method){var s=0;var g=rowIdsByGroup();Object.keys(g.out).forEach(function(id){var e=cells[cellKey(y,id,wi)];if(e&&e.method===method)s+=e.amt;});return s;}
 function weekIncome(wi){return yWeekIncome(curYear(),wi);}
 function weekCashOut(wi){return yWeekOut(curYear(),wi,"cash");}
+function ghostOutForWeek(wi){
+ var s=0;
+ // bill ghosts: bills due in this week with no confirmed cell
+ bills.forEach(function(b){
+   var rid="bill_"+b.id;
+   if(cells[cellKey(curYear(),rid,wi)])return; // already confirmed -> counted in real cash out elsewhere
+   if(billDueInWeek(b,curYear(),wi)) s+=b.amount;
+ });
+ // loan planned-payment ghosts in this week
+ loans.forEach(function(l){
+   var rid="loan_"+l.id;
+   if(cells[cellKey(curYear(),rid,wi)])return;
+   if(l.plans){var ws=weekDate(curYear(),wi);var we=new Date(ws);we.setDate(we.getDate()+6);
+     l.plans.forEach(function(pp){var pd=parseISO(pp.date);if(pd&&pd>=ws&&pd<=we)s+=pp.amt;});}
+ });
+ return s;
+}
+// planned cash out = confirmed cash spends + ghost (planned) amounts
+function weekCashOutPlanned(wi){return weekCashOut(wi)+ghostOutForWeek(wi);}
+
 function weekCardOut(wi){return yWeekOut(curYear(),wi,"card");}
 function weekAfterOut(wi){return yWeekOut(curYear(),wi,"after");}
 function weekPotOut(wi){return yWeekOut(curYear(),wi,"pot");}
@@ -681,7 +701,7 @@ function renderGrid(wrap){
    for(var wi=0;wi<NW;wi++){var v=fn(wi);tr.appendChild(h("td",{style:"text-align:center;padding:6px 3px;font-weight:700;font-size:10.5px;color:"+color+";border-top:2px solid "+C.rule+";"},[v?money0(v):"–"]));}
    tbl.appendChild(tr);}
  totRow("Income",weekIncome,C.green,true);
- totRow("Cash out",weekCashOut,C.cash,false);
+ totRow("Cash out (incl. planned)",weekCashOutPlanned,C.cash,false);
  totRow("Card out",weekCardOut,C.card_,false);
  totRow("Afterpay",weekAfterOut,C.after,false);
  totRow("Pot out",weekPotOut,C.pot,false);
