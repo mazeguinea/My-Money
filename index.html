@@ -46,7 +46,10 @@ function money0(n){n=n||0;return (n<0?"-":"")+"$"+Math.abs(Math.round(n)).toLoca
 function uid(){return "x"+Date.now()+Math.floor(Math.random()*999);}
 
 /* ===== WEEKS: per-year, 52 weeks, Jan 1 anchor per year. Add-week extends; rolls to next year. ===== */
-function yearAnchor(y){return y===2026?new Date(2026,6,1):new Date(y,0,1);} // 2026 starts Jul 1
+function yearAnchor(y){
+ if(settings&&settings.startDate){var p=String(settings.startDate).split("-");if(p.length===3){var sd=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));if(sd.getFullYear()===y||y===settings.year)return sd;}}
+ return y===2026?new Date(2026,6,1):new Date(y,0,1);
+}
 function weekDate(year,wi){var d=yearAnchor(year);d.setDate(d.getDate()+wi*7);return d;}
 function wlabel(d){return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}
 
@@ -477,11 +480,68 @@ function renderDueReminders(wrap){
  wrap.appendChild(box);
 }
 
+
+
+function currentWeekIndex(){
+ var today=new Date();today.setHours(0,0,0,0);
+ var NW=weeksInYear(curYear());
+ for(var wi=0;wi<NW;wi++){var ws=weekDate(curYear(),wi);ws.setHours(0,0,0,0);var we=new Date(ws);we.setDate(we.getDate()+6);we.setHours(23,59,59,0);if(today>=ws&&today<=we)return wi;}
+ // if today is before week 0, return 0; if after last, return last
+ var first=weekDate(curYear(),0);first.setHours(0,0,0,0);
+ if(today<first)return 0;
+ return NW-1;
+}
+// health for a specific week index: income that week vs planned cash out that week, plus a starting cash for "this week"
+function healthForWeek(wi,includeCashNow){
+ var income=weekIncome(wi);
+ var out=weekCashOutPlanned(wi); // confirmed cash + ghosts for that week
+ var spare, cash;
+ if(includeCashNow){
+   // THIS week: free cash already includes this week's banked income -> spare = freeCash - this week's expenses
+   cash=freeCash(); spare=cash-out;
+ } else {
+   // future week: forward-looking -> income arriving that week minus that week's expenses
+   cash=0; spare=income-out;
+ }
+ var status=spare>=200?"healthy":spare>=0?"tight":"short";
+ return {spare:spare,income:income,due:out,cash:cash,status:status};
+}
+// health for the rest of THIS calendar month: sum of weeks whose date is in current month from current week onward
+function healthForMonth(){
+ var today=new Date();today.setHours(0,0,0,0);
+ var m=today.getMonth(),y=today.getFullYear();
+ var NW=weeksInYear(curYear());var cwi=currentWeekIndex();
+ // Carry-forward chain, identical logic to the weekly cards:
+ // start from this week's ending balance (freeCash - this week's expenses),
+ // then for each subsequent week in this calendar month add its income and subtract its expenses.
+ var running=freeCash()-weekCashOutPlanned(cwi); // end of current week
+ var income=weekIncome(cwi), out=weekCashOutPlanned(cwi);
+ for(var wi=cwi+1;wi<NW;wi++){var ws=weekDate(curYear(),wi);ws.setHours(0,0,0,0);
+   if(ws.getMonth()===m&&ws.getFullYear()===y){
+     var inc=weekIncome(wi), o=weekCashOutPlanned(wi);
+     running+=inc-o; income+=inc; out+=o;
+   } else if(ws.getMonth()!==m || ws.getFullYear()!==y){
+     // once we pass the current month, stop (weeks are chronological)
+     if(ws>today && (ws.getMonth()!==m||ws.getFullYear()!==y)) break;
+   }
+ }
+ var spare=running;
+ var status=spare>=200?"healthy":spare>=0?"tight":"short";
+ return {spare:spare,income:income,due:out,cash:freeCash(),status:status};
+}
+
 function renderHealthBanner(wrap){
- var ew=daysToEndOfWeek();
- var thisWeek=healthFor(0,ew,true);
- var nextWeek=healthFor(ew+1,ew+7,false);
- var month=healthFor(0,daysToEndOfMonth(),true);
+ var cwi=currentWeekIndex();
+ // This week ending cash = free cash (income already banked) - this week's expenses
+ var thisWeekEnd=freeCash()-weekCashOutPlanned(cwi);
+ var thisWeek={spare:thisWeekEnd,income:weekIncome(cwi),due:weekCashOutPlanned(cwi),cash:freeCash(),
+   status:thisWeekEnd>=200?"healthy":thisWeekEnd>=0?"tight":"short"};
+ // Next week ending = this week ending + next week income - next week expenses
+ var nwInc=weekIncome(cwi+1), nwOut=weekCashOutPlanned(cwi+1);
+ var nextWeekEnd=thisWeekEnd+nwInc-nwOut;
+ var nextWeek={spare:nextWeekEnd,income:nwInc,due:nwOut,cash:thisWeekEnd,
+   status:nextWeekEnd>=200?"healthy":nextWeekEnd>=0?"tight":"short"};
+ var month=healthForMonth();
  function pill(title,h2){
    var col=h2.status==="healthy"?C.green:h2.status==="tight"?C.amber:C.red;
    var bg=h2.status==="healthy"?C.greenSoft:h2.status==="tight"?C.amberSoft:C.redSoft;
@@ -820,7 +880,15 @@ function applyTag(method,potId){
 function addWeek(){var y=curYear();var n=weeksInYear(y);if(n>=52){if(confirm("Year "+y+" is full (52 weeks). Start "+(y+1)+" Week 1?")){settings.year=y+1;if(!settings.weeks[y+1])settings.weeks[y+1]=1;saveSettings();render();}return;}settings.weeks[y]=n+1;saveSettings();render();}
 function addCat(){var name=prompt("Category name:","");if(!name)return;var inc=confirm("Income? OK=Income, Cancel=Expense");cats.push({id:uid(),name:name.trim(),kind:inc?"income":"expense"});saveCats();render();}
 function renameCat(c){var n=prompt("Rename (blank=delete):",c.name);if(n===null)return;if(n.trim()===""){if(confirm("Delete "+c.name+"?")){cats=cats.filter(function(x){return x.id!==c.id;});saveCats();render();}return;}c.name=n.trim();saveCats();render();}
-function editSettings(){var o=prompt("Opening cash ($):",String(settings.opening||0));if(o!==null)settings.opening=parseFloat(o)||0;var cc=prompt("Starting credit card ($):",String(settings.ccStart||0));if(cc!==null)settings.ccStart=parseFloat(cc)||0;var ap=prompt("Starting Afterpay ($):",String(settings.apStart||0));if(ap!==null)settings.apStart=parseFloat(ap)||0;saveSettings();render();}
+function editSettings(){
+ var o=prompt("Opening cash ($):",String(settings.opening||0));if(o!==null)settings.opening=parseFloat(o)||0;
+ var cc=prompt("Starting credit card ($):",String(settings.ccStart||0));if(cc!==null)settings.ccStart=parseFloat(cc)||0;
+ var ap=prompt("Starting Afterpay ($):",String(settings.apStart||0));if(ap!==null)settings.apStart=parseFloat(ap)||0;
+ var cur=settings.startDate||"2026-07-01";
+ var sd=prompt("Week 1 start date (YYYY-MM-DD):",cur);
+ if(sd!==null){sd=sd.trim();if(/^\d{4}-\d{2}-\d{2}$/.test(sd)){settings.startDate=sd;}else if(sd===""){delete settings.startDate;}else{alert("Please use format YYYY-MM-DD, e.g. 2025-09-12");}}
+ saveSettings();render();
+}
 
 
 
